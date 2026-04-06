@@ -9,18 +9,18 @@ https://thechoa.chosun.ac.kr/ncrProgramAppl/a/m/getProgramApplList.do
 지금 신청 가능한 비교과
 
 https://www4.chosun.ac.kr/acguide/9326/subview.do
-조선대학교 학사공지
+조선대학교 학사공지 2026년것만
 
 https://www3.chosun.ac.kr/chosun/217/subview.do
-조선대학교 교내일반공지
+조선대학교 교내일반공지 2026년것만
 
 https://www3.chosun.ac.kr/chosun/2500/subview.do
-조선대학교 외부기관공고
+조선대학교 외부기관공고 2026년것만
 
 https://scho.chosun.ac.kr/scho/2138/subview.do
-조선대학교 장학안내
+지금 신청 가능한 장학금
 
-조선대학교 식단 안내
+조선대학교 이번주 식단 안내
 
 "글로벌 기숙사식당" 
 "https://www3.chosun.ac.kr/chosun/608/subview.do"
