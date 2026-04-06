@@ -21,6 +21,7 @@ https://scho.chosun.ac.kr/scho/2138/subview.do
 조선대학교 장학안내
 
 조선대학교 식단 안내
+
 "글로벌 기숙사식당": "https://www3.chosun.ac.kr/chosun/608/subview.do",
 "입석홀 식당": "https://www3.chosun.ac.kr/chosun/607/subview.do",
 "백학사 식당(구 서석홀)": "https://www3.chosun.ac.kr/chosun/615/subview.do"
