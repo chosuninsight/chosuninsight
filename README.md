@@ -37,4 +37,4 @@ https://scho.chosun.ac.kr/scho/2138/subview.do
 txt문서들을 통해 데이터가 잘 모였는지, 내용이 정확한지 인간이 직접 확인 가능
 
 
-해당 txt문서들로 24시간마다 DB 생성 및 갱신
+해당 txt문서들로 24시간마다 UPdate_DB 생성 및 갱신
