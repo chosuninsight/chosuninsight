@@ -7,12 +7,16 @@ Update date.py :
 
 https://thechoa.chosun.ac.kr/ncrProgramAppl/a/m/getProgramApplList.do
 지금 신청 가능한 비교과
+
 https://www4.chosun.ac.kr/acguide/9326/subview.do
 조선대학교 학사공지
+
 https://www3.chosun.ac.kr/chosun/217/subview.do
 조선대학교 교내일반공지
+
 https://www3.chosun.ac.kr/chosun/2500/subview.do
 조선대학교 외부기관공고
+
 https://scho.chosun.ac.kr/scho/2138/subview.do
 조선대학교 장학안내
 
