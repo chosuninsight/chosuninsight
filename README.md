@@ -32,6 +32,9 @@ https://scho.chosun.ac.kr/scho/2138/subview.do
 "https://www3.chosun.ac.kr/chosun/615/subview.do"
 
 해당 사이트들만 웹크롤링해서 txt문서들 생성 
-txt문서들로 데이터가 잘 모였는지 내용이 정확히 모였는지 확인
-해당 txt문서들을 UPdate_DB로 생성및갱신
-24시간마다
+
+
+txt문서들을 통해 데이터가 잘 모였는지, 내용이 정확한지 인간이 직접 확인 가능
+
+
+해당 txt문서들로 24시간마다 DB 생성 및 갱신
