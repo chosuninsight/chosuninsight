@@ -7,7 +7,8 @@
 
 <script setup>
 defineProps({
-  icon: Object,
+  // icon: Object,
+  icon: [Object, Function],
   label: String,
   iconColor: String,
 })
