@@ -1,75 +1,94 @@
 <template>
-  <main class="home">
-    <!-- 소개 영역 -->
-    <div class="intro-wrap">
-      <img :src="introImg" alt="인트로 이미지" class="intro-img" />
-      <section class="intro">
-        <p class="intro-sub">안녕하세요. <strong>조선인사이트</strong>는 조선대학교 AI 통합 행정 안내 서비스입니다.<br>
-      학교소개·학사안내·대학생활 관련 정보 검색을 도와드려요.<br>
-  일부 내용은 챗봇에서 바로 안내하기 어려울 수 있으며, 관련 정보는 아래 메뉴의 바로가기 링크를 통해 확인하실 수 있어요.<br>
-  챗봇 답변은 참고용으로, 중요한 사항은 학교 홈페이지 공지사항·답변의 출처·링크·관련 부서를 통해 다시 확인해 주세요.</p>
-      </section>
-    </div>
+  <div class="home-wrapper">
+    <!-- 왼쪽: 히스토리 사이드바 -->
+    <ChatSidebar
+      :histories="histories"
+      :currentChatId="currentChatId"
+      @new-chat="onNewChat"
+      @load-chat="onLoadChat"
+      @delete-chat="onDeleteChat"
+      @clear-all="onClearAll"
+    />
 
-    <!-- 메뉴 카드 영역 -->
-    <div class="menu-carousel">
-      <section class="menu-section" :style="{ gridTemplateColumns: `repeat(${currentPageItems.length}, 1fr)` }">
-        <MenuCard
-          v-for="item in currentPageItems"
-          :key="item.label"
-          :icon="item.icon"
-          :label="item.label"
-          :iconColor="item.iconColor"
-          @click="onMenuClick"
-        />
-      </section>
-      <div class="menu-dots">
-        <span
-          v-for="i in totalPages"
-          :key="i"
-          class="dot-btn"
-          :class="{ active: menuPage === i - 1 }"
-          @click="menuPage = i - 1"
-        />
+    <!-- 오른쪽: 기존 채팅 영역 -->
+    <main class="home">
+      <!-- 소개 영역 -->
+      <div class="intro-wrap">
+        <img :src="introImg" alt="인트로 이미지" class="intro-img" />
+        <section class="intro">
+          <p class="intro-sub">안녕하세요. <strong>조선인사이트</strong>는 조선대학교 AI 통합 행정 안내 서비스입니다.<br>
+        학교소개·학사안내·대학생활 관련 정보 검색을 도와드려요.<br>
+    일부 내용은 챗봇에서 바로 안내하기 어려울 수 있으며, 관련 정보는 아래 메뉴의 바로가기 링크를 통해 확인하실 수 있어요.<br>
+    챗봇 답변은 참고용으로, 중요한 사항은 학교 홈페이지 공지사항·답변의 출처·링크·관련 부서를 통해 다시 확인해 주세요.</p>
+        </section>
       </div>
-    </div>
 
-    <!-- 채팅 메시지 영역 -->
-    <section class="chat-section" ref="chatBox">
-      <ChatMessage
-        v-for="(msg, index) in messages"
-        :key="index"
-        :who="msg.who"
-        :text="msg.text"
-        :time="msg.time"
-        :links="msg.links"
-      />
-      <!-- 로딩 애니메이션 -->
-      <div v-if="isLoading" class="message-row bot">
-        <div class="message-wrap">
-          <div class="bubble loading-bubble">
-            <span class="dot"></span>
-            <span class="dot"></span>
-            <span class="dot"></span>
-          </div>
+      <!-- 메뉴 카드 영역 -->
+      <div class="menu-carousel">
+        <section class="menu-section" :style="{ gridTemplateColumns: `repeat(${currentPageItems.length}, 1fr)` }">
+          <MenuCard
+            v-for="item in currentPageItems"
+            :key="item.label"
+            :icon="item.icon"
+            :label="item.label"
+            :iconColor="item.iconColor"
+            @click="onMenuClick"
+          />
+        </section>
+        <div class="menu-dots">
+          <span
+            v-for="i in totalPages"
+            :key="i"
+            class="dot-btn"
+            :class="{ active: menuPage === i - 1 }"
+            @click="menuPage = i - 1"
+          />
         </div>
       </div>
-    </section>
 
-    <!-- 하단 입력창 -->
-    <section class="input-section">
-      <input
-        id="chat-input"
-        v-model="inputText"
-        class="chat-input"
-        type="text"
-        placeholder="질문을 입력하세요."
-        @keyup.enter="sendMessage"
-        :disabled="isLoading"
-      />
-      <button class="send-btn" @click="sendMessage" :disabled="isLoading">전송</button>
-    </section>
-  </main>
+      <!-- 채팅 메시지 영역 -->
+      <section class="chat-section">
+        <div class="chat-scroll" ref="chatBox">
+          <ChatMessage
+            v-for="(msg, index) in messages"
+            :key="index"
+            :who="msg.who"
+            :text="msg.text"
+            :time="msg.time"
+            :links="msg.links"
+          />
+          <!-- 로딩 애니메이션 -->
+          <div v-if="isLoading" class="message-row bot">
+            <div class="message-wrap">
+              <div class="bubble loading-bubble">
+                <span class="dot"></span>
+                <span class="dot"></span>
+                <span class="dot"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 하단 입력창 -->
+      <section class="input-section">
+        <div class="input-card">
+          <input
+            id="chat-input"
+            v-model="inputText"
+            class="chat-input"
+            type="text"
+            placeholder="질문을 입력하세요."
+            @keyup.enter="sendMessage"
+            :disabled="isLoading"
+          />
+          <button class="send-btn" @click="sendMessage" :disabled="isLoading">
+            <ArrowUp :size="18" />
+          </button>
+        </div>
+      </section>
+    </main>
+  </div>
 </template>
 
 <script setup>
@@ -77,8 +96,12 @@ import { ref, computed, nextTick } from 'vue'
 import introImg from '../assets/intro.png'
 import MenuCard from '../components/MenuCard.vue'
 import ChatMessage from '../components/ChatMessage.vue'
-import { HeartHandshake, School, BookOpen, FileText, GraduationCap, CalendarDays, Megaphone, Lightbulb, Map, Newspaper, Handshake, Microscope, Monitor, ClipboardList, Users, Palette, Radio, Database, CalendarCheck } from 'lucide-vue-next'
+import ChatSidebar from '../components/ChatSidebar.vue'
+import { useChatHistory } from '../composables/useChatHistory.js'
+import { HeartHandshake, School, BookOpen, FileText, GraduationCap, CalendarDays, Megaphone, Lightbulb, Map, Newspaper, Handshake, Microscope, Monitor, ClipboardList, Users, Palette, Radio, Database, CalendarCheck, ArrowUp } from 'lucide-vue-next'
 import { fetchChatResponse } from '../services/api.js'
+
+const { histories, currentChatId, createNewChat, saveCurrentChat, loadChat, loadLastChat, deleteChat, clearAll } = useChatHistory()
 
 const menuItems = [
   // --- 1페이지 ---
@@ -176,8 +199,8 @@ const menuItems = [
       { label: '산학협력단', url: 'https://iacf.chosun.ac.kr/iacf/index.do' },
       { label: '중소기업산학협력센터', url: 'https://sme.chosun.ac.kr/csu_sme/index.do' },
       { label: '통합발달지원센터', url: 'https://ccds.chosun.ac.kr/main/' },
-      { label: '공동장비운영센터', url: ' https://iacf.chosun.ac.kr/iacf/researchDB/equipment.do' },
-      { label: 'CSU창작마을센터', url: ' https://csumaker.chosun.ac.kr/web/index.do' },
+      { label: '공동장비운영센터', url: 'https://iacf.chosun.ac.kr/iacf/researchDB/equipment.do' },
+      { label: 'CSU창작마을센터', url: 'https://csumaker.chosun.ac.kr/web/index.do' },
     ]
   },
   {
@@ -277,9 +300,10 @@ const currentPageItems = computed(() => {
   return menuItems.slice(start, start + pageSize)
 })
 
-const messages = ref([
-  { who: 'bot', text: '안녕하세요! 조선대학교에 대해 궁금한 점을 물어보세요.', time: now() }
-])
+// 페이지 로드 시 마지막 대화 복원, 없으면 새 대화 시작
+const _restored = loadLastChat()
+const messages = ref(_restored ?? createNewChat())
+
 const inputText = ref('')
 const chatBox = ref(null)
 const isLoading = ref(false)
@@ -291,53 +315,50 @@ function now() {
   return `${h}:${m}`
 }
 
+// 사이드바 이벤트 핸들러
+function onNewChat() {
+  messages.value = createNewChat()
+}
+
+function onLoadChat(id) {
+  const loaded = loadChat(id)
+  if (loaded) messages.value = loaded
+}
+
+function onDeleteChat(id) {
+  const wasCurrentChat = deleteChat(id)
+  if (wasCurrentChat) messages.value = createNewChat()
+}
+
+function onClearAll() {
+  clearAll()
+  messages.value = createNewChat()
+}
+
 function onMenuClick(label) {
   const item = menuItems.find(m => m.label === label)
   addMessage('user', label + ' 알려주세요')
   showBotReply(item.botReply, item.links)
 }
 
-/*
-function sendMessage() {
-  const text = inputText.value.trim()
-  if (!text || isLoading.value) return
-  addMessage('user', text)
-  inputText.value = ''
-  showBotReply('확인했습니다. 관련 내용을 찾고 있어요. (추후 AI 연결 예정)')
-}
-*/
-
-// HomeView.vue
-
-// import { fetchChatResponse } from '../services/api.js' // 이미 추가하셨다면 패스
-
-// ... 기존 변수들 ...
-
 async function sendMessage() {
   const text = inputText.value.trim()
   if (!text || isLoading.value) return
-  
-  // 1. 내가 보낸 메시지 화면에 표시
+
   addMessage('user', text)
   inputText.value = ''
-  
-  // 2. 로딩 애니메이션 시작
   isLoading.value = true
   scrollToBottom()
 
   try {
-    // 🚀 3. 분리해둔 api.js를 통해 백엔드(FastAPI)에 질문 전달
     const result = await fetchChatResponse(text)
-    
-    // 4. 백엔드가 DB(ChromaDB)에서 찾아온 실제 답변과 링크 표시
     addMessage('bot', result.answer, result.links)
   } catch (error) {
-    // 서버가 꺼져있거나 에러 발생 시
     addMessage('bot', '죄송합니다. 서버와 연결할 수 없습니다. 백엔드 서버(uvicorn) 상태를 확인해 주세요.')
   } finally {
-    // 5. 로딩 종료 및 스크롤 하단 이동
     isLoading.value = false
     scrollToBottom()
+    saveCurrentChat(messages.value)
   }
 }
 
@@ -347,6 +368,7 @@ function showBotReply(text, links = []) {
   setTimeout(() => {
     isLoading.value = false
     addMessage('bot', text, links)
+    saveCurrentChat(messages.value)
   }, 1000)
 }
 
@@ -365,6 +387,13 @@ async function scrollToBottom() {
 </script>
 
 <style scoped>
+.home-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+
 .home {
   flex: 1;
   padding: 20px 24px;
@@ -418,11 +447,6 @@ async function scrollToBottom() {
   border-color: transparent white transparent transparent;
 }
 
-.intro-text {
-  font-size: 17px;
-  margin-bottom: 6px;
-}
-
 .intro-sub {
   font-size: 14px;
   color: #666;
@@ -449,25 +473,50 @@ async function scrollToBottom() {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #d0e6f8;
+  background: #d7e8f7;
   cursor: pointer;
   transition: background 0.2s;
 }
 
 .dot-btn.active {
-  background: #6aabdf;
+  background: #79add8;
 }
 
 .chat-section {
   flex: 1;
+  min-height: 0;
   background: white;
   border-radius: 16px;
   border: 1px solid #c2ddf5;
+  overflow: hidden;
+}
+
+.chat-scroll {
+  height: 100%;
   padding: 16px;
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  box-sizing: border-box;
 }
+
+.chat-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.chat-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-scroll::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 4px;
+}
+
+.chat-scroll::-webkit-scrollbar-thumb:hover {
+  background: #bbb;
+}
+
 
 /* 로딩 말풍선 */
 .message-row {
@@ -514,45 +563,59 @@ async function scrollToBottom() {
 
 .input-section {
   display: flex;
+}
+
+.input-card {
+  flex: 1;
+  display: flex;
+  align-items: center;
   gap: 8px;
+  background: white;
+  border: 1px solid #d0e6f8;
+  border-radius: 24px;
+  padding: 10px 10px 10px 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
 .chat-input {
   flex: 1;
-  padding: 12px 16px;
-  border: 1.5px solid #d0e6f8;
-  border-radius: 24px;
+  border: none;
+  outline: none;
   font-size: 14px;
   font-family: inherit;
-  outline: none;
+  background: transparent;
+  color: #333;
 }
 
-.chat-input:focus {
-  border-color: #6aabdf;
+.chat-input::placeholder {
+  color: #aaa;
 }
 
 .chat-input:disabled {
-  background: #f5f5f5;
+  opacity: 0.5;
 }
 
 .send-btn {
-  padding: 12px 20px;
-  background-color: #6aabdf;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background-color: #65686a;
   color: white;
   border: none;
-  border-radius: 24px;
-  font-size: 14px;
-  font-family: inherit;
+  border-radius: 50%;
   cursor: pointer;
-  font-weight: 600;
+  flex-shrink: 0;
+  transition: background 0.15s;
 }
 
 .send-btn:hover {
-  background-color: #5a9bcf;
+  background-color: #7aaac8;
 }
 
 .send-btn:disabled {
-  background-color: #b0d4ef;
+  background-color: #d5e4ef;
   cursor: not-allowed;
 }
 </style>

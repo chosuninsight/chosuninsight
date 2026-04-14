@@ -16,7 +16,7 @@ import logoImg from '../assets/logo.png'
 <style scoped>
 .header {
   background: white;
-  border-bottom: 1.5px solid #d0e6f8;
+  border-bottom: 1.0px solid #e8f2fb;
   padding: 16px 24px;
 }
 

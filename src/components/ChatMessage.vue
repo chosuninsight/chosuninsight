@@ -71,7 +71,7 @@ const props = defineProps({
 }
 
 .bot .bubble {
-  background-color: #eef4fb;
+  background-color: #ecf4fc;
   color: #333;
   border: 1px solid #c2ddf5;
   border-bottom-left-radius: 4px;
