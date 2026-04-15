@@ -1,10 +1,6 @@
-# ✅ FastAPI + ChromaDB (상태코드 적용 버전)
+# ✅ FastAPI + ChromaDB + GPT 연결 (최종)
 
-from fastapi import FastAPI, HTTPException, status
-from pydantic import BaseModel
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-# ✅ FastAPI + ChromaDB (상태코드 적용 버전)
+import os
 
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel
@@ -15,6 +11,20 @@ from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 
 from openai import AsyncOpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# =====================================
+# 🔥 환경변수 추가 (요청사항 반영)
+# =====================================
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+CHAT_MODEL_NAME = os.getenv("CHAT_MODEL_NAME", "gpt-4o-mini")
+PERSIST_DIRECTORY = os.getenv("PERSIST_DIRECTORY", "C:/chroma_db_store")
+COLLECTION_NAME = os.getenv("COLLECTION_NAME", "chosun_extracurricular")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "jhgan/ko-sroberta-multitask")
+
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # =====================================
 # 1. FastAPI 기본 설정
@@ -46,53 +56,83 @@ class SearchResponse(BaseModel):
     sources: list
 
 # =====================================
-# 3. ChromaDB 연결
+# 3. ChromaDB 연결 (env 적용)
 # =====================================
-PERSIST_DIRECTORY = "C:/chroma_db_store"
-
 embeddings = HuggingFaceEmbeddings(
-    model_name="jhgan/ko-sroberta-multitask"
+    model_name=EMBEDDING_MODEL
 )
 
 vectorstore = Chroma(
-    collection_name="chosun_extracurricular",
+    collection_name=COLLECTION_NAME,
     embedding_function=embeddings,
     persist_directory=PERSIST_DIRECTORY
 )
 
-db_count = vectorstore._collection.count()
-print("📦 DB 데이터 개수:", db_count)
+print("📦 DB 데이터 개수:", vectorstore._collection.count())
 
 # =====================================
-# 4. 검색 함수 (에러 처리 포함)
+# 🔥 4. 검색 함수 (유사도 필터링 추가)
 # =====================================
 def search_docs(query: str):
-    # ❌ 빈 질문
     if not query.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="질문이 비어 있습니다."
         )
 
-    results = vectorstore.similarity_search(query, k=3)
+    # 🔥 핵심 변경 (score 포함)
+    results = vectorstore.similarity_search_with_score(query, k=3)
 
-    # ❌ 검색 결과 없음
-    if not results:
+    threshold = 0.5
+    docs, sources = [], []
+
+    for doc, score in results:
+        if score < threshold:
+            docs.append(doc.page_content)
+            sources.append(doc.metadata.get("source", ""))
+
+    # ❌ 필터링 후 없음
+    if not docs:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="검색 결과가 없습니다."
         )
 
-    docs = [doc.page_content for doc in results]
-    sources = [doc.metadata.get("source", "") for doc in results]
-
     return docs, sources
 
 # =====================================
-# 5. API
+# 🔥 5. GPT 응답 함수 추가
+# =====================================
+async def get_gpt_response(question, context):
+    prompt = f"""
+너는 조선대학교 정보 도우미야.
+아래 정보를 기반으로 질문에 답변해.
+
+[참고 정보]
+{context}
+
+[질문]
+{question}
+
+[규칙]
+- 정보 없으면 "해당 정보를 찾을 수 없습니다"라고 답해
+- 한국어로 답변
+"""
+
+    response = await client.chat.completions.create(
+        model=CHAT_MODEL_NAME,  # 🔥 환경변수 적용
+        messages=[
+            {"role": "system", "content": "조선대학교 정보 챗봇"},
+            {"role": "user", "content": prompt}
+        ]
+    )
+
+    return response.choices[0].message.content
+
+# =====================================
+# 6. API
 # =====================================
 
-# 기본 확인
 @app.get("/", status_code=status.HTTP_200_OK)
 def root():
     return {
@@ -115,24 +155,25 @@ def search(req: ChatRequest):
         "sources": sources
     }
 
-# 챗봇 API
+# 🔥 챗봇 API (GPT 연결됨)
 @app.post(
     "/chat",
     response_model=ChatResponse,
     status_code=status.HTTP_200_OK
 )
-def chat(req: ChatRequest):
+async def chat(req: ChatRequest):
+
     docs, sources = search_docs(req.question)
 
     context = "\n".join(docs)
 
-    # 🔥 현재는 임시 응답 (나중에 LLM 연결)
-    answer = f"""
-질문: {req.question}
-
-참고 정보:
-{context}
-"""
+    try:
+        answer = await get_gpt_response(req.question, context)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail="GPT 응답 생성 실패"
+        )
 
     return {
         "success": True,
@@ -141,7 +182,7 @@ def chat(req: ChatRequest):
     }
 
 # =====================================
-# 6. 글로벌 에러 처리 (실무 스타일)
+# 7. 글로벌 에러 처리
 # =====================================
 @app.exception_handler(Exception)
 def global_exception_handler(request, exc):
@@ -155,151 +196,5 @@ def global_exception_handler(request, exc):
     )
 
 # =====================================
-# 7. 실행 방법
-# =====================================
-# uvicorn main:app --reload
-from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
-
-# =====================================
-# 1. FastAPI 기본 설정
-# =====================================
-app = FastAPI(title="Chosun RAG API")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# =====================================
-# 2. 요청 / 응답 모델
-# =====================================
-class ChatRequest(BaseModel):
-    question: str
-
-class ChatResponse(BaseModel):
-    success: bool
-    answer: str
-    sources: list
-
-class SearchResponse(BaseModel):
-    success: bool
-    documents: list
-    sources: list
-
-# =====================================
-# 3. ChromaDB 연결
-# =====================================
-PERSIST_DIRECTORY = "C:/chroma_db_store"
-
-embeddings = HuggingFaceEmbeddings(
-    model_name="jhgan/ko-sroberta-multitask"
-)
-
-vectorstore = Chroma(
-    collection_name="chosun_extracurricular",
-    embedding_function=embeddings,
-    persist_directory=PERSIST_DIRECTORY
-)
-
-db_count = vectorstore._collection.count()
-print("📦 DB 데이터 개수:", db_count)
-
-# =====================================
-# 4. 검색 함수 (에러 처리 포함)
-# =====================================
-def search_docs(query: str):
-    # ❌ 빈 질문
-    if not query.strip():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="질문이 비어 있습니다."
-        )
-
-    results = vectorstore.similarity_search(query, k=3)
-
-    # ❌ 검색 결과 없음
-    if not results:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="검색 결과가 없습니다."
-        )
-
-    docs = [doc.page_content for doc in results]
-    sources = [doc.metadata.get("source", "") for doc in results]
-
-    return docs, sources
-
-# =====================================
-# 5. API
-# =====================================
-
-# 기본 확인
-@app.get("/", status_code=status.HTTP_200_OK)
-def root():
-    return {
-        "success": True,
-        "message": "RAG 서버 실행 중"
-    }
-
-# 검색 API
-@app.post(
-    "/search",
-    response_model=SearchResponse,
-    status_code=status.HTTP_200_OK
-)
-def search(req: ChatRequest):
-    docs, sources = search_docs(req.question)
-
-    return {
-        "success": True,
-        "documents": docs,
-        "sources": sources
-    }
-
-# 챗봇 API
-@app.post(
-    "/chat",
-    response_model=ChatResponse,
-    status_code=status.HTTP_200_OK
-)
-def chat(req: ChatRequest):
-    docs, sources = search_docs(req.question)
-
-    context = "\n".join(docs)
-
-    # 🔥 현재는 임시 응답 (나중에 LLM 연결)
-    answer = f"""
-질문: {req.question}
-
-참고 정보:
-{context}
-"""
-
-    return {
-        "success": True,
-        "answer": answer,
-        "sources": sources
-    }
-
-# =====================================
-# 6. 글로벌 에러 처리 (실무 스타일)
-# =====================================
-@app.exception_handler(Exception)
-def global_exception_handler(request, exc):
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "success": False,
-            "message": "서버 내부 오류 발생",
-            "detail": str(exc)
-        }
-    )
-
-# =====================================
-# 7. 실행 방법
-# =====================================
+# 실행
 # uvicorn main:app --reload
