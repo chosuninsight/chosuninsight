@@ -1,4 +1,4 @@
-# ✅ FastAPI + ChromaDB + Ollama (최종 안정화)
+# ✅ FastAPI + ChromaDB + GPT 연결 (최종)
 
 import os
 
@@ -9,20 +9,22 @@ from fastapi.responses import JSONResponse
 
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_ollama import OllamaLLM
+
+from openai import AsyncOpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # =====================================
-# 🔥 환경변수 (추가)
+# 🔥 환경변수 추가 (요청사항 반영)
 # =====================================
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+CHAT_MODEL_NAME = os.getenv("CHAT_MODEL_NAME", "gpt-4o-mini")
 PERSIST_DIRECTORY = os.getenv("PERSIST_DIRECTORY", "C:/chroma_db_store")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "chosun_extracurricular")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "jhgan/ko-sroberta-multitask")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:4b")
 
-# =====================================
-# 🔥 LLM (Ollama)
-# =====================================
-llm = OllamaLLM(model=OLLAMA_MODEL)
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # =====================================
 # 1. FastAPI 기본 설정
@@ -78,7 +80,7 @@ def search_docs(query: str):
             detail="질문이 비어 있습니다."
         )
 
-    # 🔥 핵심 변경 (score 기반)
+    # 🔥 핵심 변경 (score 포함)
     results = vectorstore.similarity_search_with_score(query, k=3)
 
     threshold = 0.5
@@ -89,7 +91,7 @@ def search_docs(query: str):
             docs.append(doc.page_content)
             sources.append(doc.metadata.get("source", ""))
 
-    # ❌ 필터링 후 결과 없음
+    # ❌ 필터링 후 없음
     if not docs:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -99,7 +101,36 @@ def search_docs(query: str):
     return docs, sources
 
 # =====================================
-# 🔥 5. API
+# 🔥 5. GPT 응답 함수 추가
+# =====================================
+async def get_gpt_response(question, context):
+    prompt = f"""
+너는 조선대학교 정보 도우미야.
+아래 정보를 기반으로 질문에 답변해.
+
+[참고 정보]
+{context}
+
+[질문]
+{question}
+
+[규칙]
+- 정보 없으면 "해당 정보를 찾을 수 없습니다"라고 답해
+- 한국어로 답변
+"""
+
+    response = await client.chat.completions.create(
+        model=CHAT_MODEL_NAME,  # 🔥 환경변수 적용
+        messages=[
+            {"role": "system", "content": "조선대학교 정보 챗봇"},
+            {"role": "user", "content": prompt}
+        ]
+    )
+
+    return response.choices[0].message.content
+
+# =====================================
+# 6. API
 # =====================================
 
 @app.get("/", status_code=status.HTTP_200_OK)
@@ -124,53 +155,34 @@ def search(req: ChatRequest):
         "sources": sources
     }
 
-# 🔥 챗봇 API (Ollama 연결)
+# 🔥 챗봇 API (GPT 연결됨)
 @app.post(
     "/chat",
     response_model=ChatResponse,
     status_code=status.HTTP_200_OK
 )
-def chat(req: ChatRequest):
+async def chat(req: ChatRequest):
+
     docs, sources = search_docs(req.question)
 
     context = "\n".join(docs)
 
-    # 🔥 프롬프트 개선 (환각 방지)
-    prompt = f"""
-너는 조선대학교 정보 도우미야.
-
-아래 정보를 기반으로 질문에 답해.
-
-[참고 정보]
-{context}
-
-[질문]
-{req.question}
-
-[규칙]
-- 정보 없으면 "해당 정보를 찾을 수 없습니다"라고 답해
-- 한국어로 답변
-"""
-
     try:
-        answer = llm.invoke(prompt)
+        answer = await get_gpt_response(req.question, context)
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="LLM 응답 생성 실패"
+            status_code=500,
+            detail="GPT 응답 생성 실패"
         )
 
     return {
         "success": True,
         "answer": answer,
-        "sources": [
-            {"label": f"참고 자료 {i+1}", "url": src}
-            for i, src in enumerate(sources)
-        ]
+        "sources": sources
     }
 
 # =====================================
-# 6. 글로벌 에러 처리
+# 7. 글로벌 에러 처리
 # =====================================
 @app.exception_handler(Exception)
 def global_exception_handler(request, exc):
