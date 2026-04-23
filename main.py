@@ -50,11 +50,6 @@ class ChatResponse(BaseModel):
     answer: str
     sources: list
 
-class SearchResponse(BaseModel):
-    success: bool
-    documents: list
-    sources: list
-
 # =====================================
 # 3. ChromaDB 연결 (env 적용)
 # =====================================
@@ -138,21 +133,6 @@ def root():
     return {
         "success": True,
         "message": "RAG 서버 실행 중"
-    }
-
-# 검색 API
-@app.post(
-    "/search",
-    response_model=SearchResponse,
-    status_code=status.HTTP_200_OK
-)
-def search(req: ChatRequest):
-    docs, sources = search_docs(req.question)
-
-    return {
-        "success": True,
-        "documents": docs,
-        "sources": sources
     }
 
 # 🔥 챗봇 API (GPT 연결됨)
