@@ -618,4 +618,26 @@ async function scrollToBottom() {
   background-color: #d5e4ef;
   cursor: not-allowed;
 }
+
+@media (max-width: 480px) {
+  .home {
+    padding: 12px;
+    gap: 10px;
+    overflow-y: auto;
+  }
+
+  .intro-img {
+    display: none;
+  }
+
+  .intro-sub {
+    font-size: 12px;
+  }
+
+  .chat-section {
+    min-height: 320px;
+    flex: none;
+  }
+}
+
 </style>

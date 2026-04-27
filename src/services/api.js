@@ -1,6 +1,6 @@
 // src/services/api.js
 
-const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
 /**
  * 백엔드 RAG 서버와 통신하여 답변을 받아오는 함수
@@ -23,13 +23,9 @@ export const fetchChatResponse = async (question) => {
 
     const data = await response.json();
     
-    // 백엔드 응답 구조: { success: true, answer: "...", sources: [...] }
+    // 백엔드 응답 구조: { success: true, documents: [...], sources: [...] }
     return {
-      answer: data.answer,
-      // links: data.sources.map((src, index) => ({
-      //   label: `참고 자료 ${index + 1}`,
-      //   url: src
-      // }))
+      answer: data.answer, 
       links: []
     };
   } catch (error) {

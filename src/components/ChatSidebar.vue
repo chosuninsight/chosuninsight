@@ -255,4 +255,5 @@ const isExpanded = ref(false)
   background: #fde8e8;
   color: #db8484;
 }
+
 </style>
