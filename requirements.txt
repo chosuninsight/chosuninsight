@@ -1,0 +1,31 @@
+# --- Web Server ---
+fastapi
+uvicorn
+python-multipart
+
+# --- AI & RAG ---
+langchain
+langchain-community
+langchain-core
+chromadb
+langchain-chroma
+langchain-huggingface
+openai
+google-genai
+torch --index-url https://download.pytorch.org/whl/cpu
+sentence-transformers
+
+# --- Web Crawling & Scraping (추가됨) ---
+requests
+beautifulsoup4
+selenium
+webdriver-manager
+urllib3
+
+# --- Data Processing & Utilities ---
+pypdf
+python-dotenv
+schedule  # (추가됨)
+
+# --- Validation ---
+pydantic>=2.0.0

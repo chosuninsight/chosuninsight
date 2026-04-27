@@ -1,0 +1,18 @@
+
+# Secrets — never commit
+.env
+
+venv/
+env/
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+.python-version
+
+node_modules/
+dist/
+chroma_db_update/
+chosun_rag_data/
