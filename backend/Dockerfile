@@ -14,7 +14,10 @@ WORKDIR /app
 
 # 2. 의존성 설치 (타임아웃 방지 옵션 추가)
 COPY requirements.txt ./
-RUN pip install --upgrade pip && \
+RUN pip install --no-cache-dir --upgrade pip && \
+    # 🔥 핵심: 700MB 대신 200MB 이하의 CPU 전용 torch를 공식 서버에서 직접 설치합니다.
+    pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
+    # 나머지 패키지는 공식 PyPI 저장소에서 안정적으로 설치합니다.
     pip install --no-cache-dir --default-timeout=1000 -r requirements.txt
 
 # 3. 윈도우 스타일 경로 미리 생성 (Update_date.py 호환성)
