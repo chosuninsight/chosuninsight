@@ -8,7 +8,6 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from webdriver_manager.chrome import ChromeDriverManager
 import urllib3
 import schedule
 
@@ -40,17 +39,28 @@ if not os.path.exists(DATA_SAVE_DIR):
 if not os.path.exists(UPDATE_DB_DIR):
     os.makedirs(UPDATE_DB_DIR)
 
+
+def create_webdriver():
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+
+    chrome_bin = os.getenv("CHROME_BIN")
+    if chrome_bin:
+        options.binary_location = chrome_bin
+
+    chromedriver_path = os.getenv("CHROMEDRIVER_PATH", "/usr/bin/chromedriver")
+    return webdriver.Chrome(service=Service(chromedriver_path), options=options)
+
 # =====================================================================
 # 1~6. 웹 크롤링 수집 함수들 (변경 없음, DATA_SAVE_DIR에 저장)
 # =====================================================================
 def crawl_extracurricular_data():
     url = "https://thechoa.chosun.ac.kr/ncrProgramAppl/a/m/getProgramApplList.do"
-    options = Options()
-    options.add_argument('--headless')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    driver = create_webdriver()
     collected_data = []
 
     try:
@@ -198,12 +208,7 @@ def crawl_external_notices():
 
 def crawl_active_scholarships_with_selenium():
     url = "https://scho.chosun.ac.kr/scho/2138/subview.do"
-    options = Options()
-    options.add_argument('--headless')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    driver = create_webdriver()
     collected_data = []
 
     print(f"▶ [5/6] 장학안내 수집 중...")

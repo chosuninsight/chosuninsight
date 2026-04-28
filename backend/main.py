@@ -1,6 +1,7 @@
-# ✅ FastAPI + ChromaDB + GPT 연결 (최종)
-
 import os
+import re
+from collections import defaultdict
+from dataclasses import dataclass
 
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel
@@ -9,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
+from rank_bm25 import BM25Okapi
 
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
@@ -25,6 +27,29 @@ UPDATE_DB_DIRECTORY = os.getenv("UPDATE_DB_DIRECTORY", "/app/chroma_db_update") 
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "chosun_insight")
 UPDATE_COLLECTION_NAME = "chosun_daily_update" # Update date.py의 설정과 일치
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "jhgan/ko-sroberta-multitask")
+VECTOR_TOP_K = int(os.getenv("VECTOR_TOP_K", "6"))
+BM25_TOP_K = int(os.getenv("BM25_TOP_K", "6"))
+HYBRID_TOP_K = int(os.getenv("HYBRID_TOP_K", "6"))
+RRF_K = int(os.getenv("RRF_K", "60"))
+QUERY_EXPANSION_RULES = {
+    "컴공": ["컴퓨터공학과", "컴퓨터공학전공"],
+    "컴퓨터공학과": ["컴퓨터공학전공", "컴공"],
+    "소웨": ["소프트웨어학부", "소프트웨어"],
+    "정통": ["정보통신공학전공", "정보통신공학과"],
+    "정시": ["정시모집", "정시 전형"],
+    "수시": ["수시모집", "수시 전형"],
+    "졸업학점": ["졸업 요건", "졸업이수학점", "졸업 이수 학점"],
+    "졸업요건": ["졸업 학점", "졸업이수학점", "졸업 이수 학점"],
+    "장학금": ["장학", "장학 안내", "장학안내"],
+}
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "ALLOWED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://foxibu.is-a.dev:9000"
+    ).split(",")
+    if origin.strip()
+]
 
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
@@ -35,7 +60,7 @@ app = FastAPI(title="Chosun RAG API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -51,6 +76,13 @@ class ChatResponse(BaseModel):
     success: bool
     answer: str
     sources: list
+
+@dataclass(frozen=True)
+class IndexedDocument:
+    key: str
+    content: str
+    source: str
+    store: str
 
 # =====================================
 # 3. ChromaDB 연결 (env 적용)
@@ -75,8 +107,122 @@ vectorstore_update = Chroma(
 print("📦 기존 DB 데이터 개수:", vectorstore_origin._collection.count())
 print("📦 갱신 DB 데이터 개수:", vectorstore_update._collection.count())
 
+def tokenize_korean_text(text: str) -> list[str]:
+    return re.findall(r"[0-9A-Za-z가-힣]+", text.lower())
+
+def expand_query_variants(query: str) -> list[str]:
+    variants = [query.strip()]
+
+    for term, expansions in QUERY_EXPANSION_RULES.items():
+        if term in query:
+            for expansion in expansions:
+                variants.append(query.replace(term, expansion))
+            variants.extend(expansions)
+
+    seen = set()
+    deduped_variants = []
+    for variant in variants:
+        normalized_variant = variant.strip()
+        if not normalized_variant or normalized_variant in seen:
+            continue
+        seen.add(normalized_variant)
+        deduped_variants.append(normalized_variant)
+
+    return deduped_variants
+
+def build_doc_key(content: str, source: str, store: str) -> str:
+    return f"{store}::{source}::{content}"
+
+def load_collection_documents(vectorstore: Chroma, store_name: str) -> list[IndexedDocument]:
+    raw = vectorstore._collection.get(include=["documents", "metadatas"])
+    documents = raw.get("documents", [])
+    metadatas = raw.get("metadatas", [])
+    indexed_docs = []
+
+    for content, metadata in zip(documents, metadatas):
+        source = ""
+        if metadata:
+            source = metadata.get("source", "")
+
+        indexed_docs.append(
+            IndexedDocument(
+                key=build_doc_key(content, source, store_name),
+                content=content,
+                source=source,
+                store=store_name,
+            )
+        )
+
+    return indexed_docs
+
+all_indexed_docs = (
+    load_collection_documents(vectorstore_origin, "origin")
+    + load_collection_documents(vectorstore_update, "update")
+)
+indexed_doc_map = {doc.key: doc for doc in all_indexed_docs}
+bm25_corpus = [tokenize_korean_text(doc.content) for doc in all_indexed_docs]
+bm25 = BM25Okapi(bm25_corpus) if bm25_corpus else None
+
+print("🔎 하이브리드 검색 문서 개수:", len(all_indexed_docs))
+
+def reciprocal_rank_fusion(rank_lists: list[list[str]], limit: int) -> list[str]:
+    fused_scores = defaultdict(float)
+
+    for rank_list in rank_lists:
+        for rank, doc_key in enumerate(rank_list, start=1):
+            fused_scores[doc_key] += 1.0 / (RRF_K + rank)
+
+    return [
+        doc_key
+        for doc_key, _ in sorted(
+            fused_scores.items(),
+            key=lambda item: item[1],
+            reverse=True
+        )[:limit]
+    ]
+
+def run_vector_search(vectorstore: Chroma, store_name: str, query: str, k: int) -> list[str]:
+    results = vectorstore.similarity_search_with_score(query, k=k)
+    ranked_keys = []
+
+    for doc, _score in results:
+        key = build_doc_key(
+            doc.page_content,
+            doc.metadata.get("source", ""),
+            store_name,
+        )
+        if key in indexed_doc_map:
+            ranked_keys.append(key)
+
+    return ranked_keys
+
+def run_bm25_search(query: str, k: int) -> list[str]:
+    if not bm25:
+        return []
+
+    tokenized_query = tokenize_korean_text(query)
+    if not tokenized_query:
+        return []
+
+    scores = bm25.get_scores(tokenized_query)
+    ranked_pairs = sorted(
+        enumerate(scores),
+        key=lambda item: item[1],
+        reverse=True
+    )
+
+    ranked_keys = []
+    for doc_index, score in ranked_pairs:
+        if score <= 0:
+            continue
+        ranked_keys.append(all_indexed_docs[doc_index].key)
+        if len(ranked_keys) >= k:
+            break
+
+    return ranked_keys
+
 # =====================================
-# 🔥 4. 검색 함수 (유사도 필터링 추가)
+# 🔥 4. 검색 함수 (벡터 + BM25 하이브리드)
 # =====================================
 def search_docs(query: str):
     if not query.strip():
@@ -85,16 +231,40 @@ def search_docs(query: str):
             detail="질문이 비어 있습니다."
         )
 
-    res_origin = vectorstore_origin.similarity_search_with_score(query, k=3)
-    res_update = vectorstore_update.similarity_search_with_score(query, k=3)
-    
-    all_results = res_origin + res_update
+    query_variants = expand_query_variants(query)
+    vector_ranked_keys = []
+    bm25_ranked_keys = []
+
+    for query_variant in query_variants:
+        vector_ranked_keys.extend(
+            run_vector_search(
+                vectorstore_origin,
+                "origin",
+                query_variant,
+                VECTOR_TOP_K // 2 + VECTOR_TOP_K % 2,
+            )
+        )
+        vector_ranked_keys.extend(
+            run_vector_search(
+                vectorstore_update,
+                "update",
+                query_variant,
+                VECTOR_TOP_K // 2,
+            )
+        )
+        bm25_ranked_keys.extend(run_bm25_search(query_variant, BM25_TOP_K))
+
+    fused_keys = reciprocal_rank_fusion(
+        [vector_ranked_keys, bm25_ranked_keys],
+        HYBRID_TOP_K
+    )
 
     docs, sources = [], []
 
-    for doc, score in all_results:
-        docs.append(doc.page_content)
-        sources.append(doc.metadata.get("source", ""))
+    for doc_key in fused_keys:
+        doc = indexed_doc_map[doc_key]
+        docs.append(doc.content)
+        sources.append(doc.source)
 
     if not docs:
         raise HTTPException(

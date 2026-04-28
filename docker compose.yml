@@ -1,23 +1,20 @@
-version: '3.8'
-
 services:
   updater:
     build:
       context: .
       dockerfile: ./backend/Dockerfile
     container_name: chosun_updater
-    # ✅ 시작할 때 기존 플래그 파일이 있다면 삭제하고 스크립트 실행
     command: >
       sh -c "rm -f /root/tmp/update_complete.flag && python Update_date.py"
     volumes:
-      - /etc/localtime:/etc/localtime:ro  # ✅ 호스트의 시간 설정을 읽기 전용으로 공유
+      - /etc/localtime:/etc/localtime:ro
       - ./Update_date.py:/app/Update_date.py
       - ./chosun_rag_data:/app/chosun_rag_data
       - ./chroma_db_update:/root/chroma_db_update
-      - tmp_sync:/root/tmp # ✅ 전용 통로 연결
+      - tmp_sync:/root/tmp
     environment:
-      - PYTHONUNBUFFERED=1
-      - TZ=Asia/Seoul  # ✅ 한국 시간대로 설정
+      PYTHONUNBUFFERED: "1"
+      TZ: Asia/Seoul
     networks:
       - app-network
 
@@ -26,14 +23,13 @@ services:
       context: .
       dockerfile: ./backend/Dockerfile
     container_name: chosun_backend
-    # ✅ 로그에서 '파이프라인 완료' 문구가 나올 때까지 5초 간격으로 체크 후 uvicorn 실행
     entrypoint: >
       sh -c "
-      echo '🔍 [/root/tmp] 신호 대기 중...' &&
+      echo '[/root/tmp] waiting for update flag...' &&
       until [ -f /root/tmp/update_complete.flag ]; do
-        sleep 5
+        sleep 5;
       done &&
-      echo '✅ 신호 확인! 서버를 시작합니다.' &&
+      echo 'update flag detected, starting backend' &&
       uvicorn backend.main:app --host 0.0.0.0 --port 8000
       "
     volumes:
@@ -41,19 +37,19 @@ services:
       - ./chroma_db_store:/app/chroma_db
       - ./chroma_db_update:/root/chroma_db_update
       - ./chosun_rag_data:/app/chosun_rag_data
-      - tmp_sync:/root/tmp # ✅ updater와 동일한 통로 연결
-    
-    ports:
-      - "8000:8000"
-    env_file: .env
-    
+      - tmp_sync:/root/tmp
+    env_file:
+      - .env
     environment:
-      - PYTHONUNBUFFERED=1
-      - PERSIST_DIRECTORY=/app/chroma_db
-      - UPDATE_DB_DIRECTORY=/root/chroma_db_update
-      - TZ=Asia/Seoul  # ✅ 한국 시간대로 설정
+      PYTHONUNBUFFERED: "1"
+      PERSIST_DIRECTORY: /app/chroma_db
+      UPDATE_DB_DIRECTORY: /root/chroma_db_update
+      TZ: Asia/Seoul
+      ALLOWED_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,http://localhost:9000,http://127.0.0.1:9000,http://foxibu.is-a.dev:9000,http://localhost:9001,http://127.0.0.1:9001,http://foxibu.is-a.dev:9001,https://localhost:9000,https://127.0.0.1:9000,https://foxibu.is-a.dev:9000
     depends_on:
       - updater
+    ports:
+      - "127.0.0.1:8001:8000"
     networks:
       - app-network
 
@@ -61,17 +57,16 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    container_name: chosun_frontend
     ports:
-      - "5173:5173"
-    env_file: .env
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      - "9001:80"
+    depends_on:
+      - backend
     networks:
       - app-network
 
 volumes:
-  tmp_sync: # ✅ 컨테이너끼리만 공유되는 가상 볼륨
+  tmp_sync:
 
 networks:
   app-network:

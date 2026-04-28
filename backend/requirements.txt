@@ -16,6 +16,7 @@ google-genai
 pypdf
 python-dotenv
 sentence-transformers
+rank-bm25
 
 # --- Validation (Rust 에러 방지를 위해 최소 버전만 지정) ---
 pydantic>=2.0.0

@@ -1,21 +1,16 @@
-# Use an official Node runtime as a parent image
-FROM node:20-alpine
+FROM node:20-alpine AS build
 
-# Set the working directory in the container
 WORKDIR /app
 
-# Copy package.json and package-lock.json (or yarn.lock)
 COPY package*.json ./
+RUN npm ci
 
-# Install project dependencies
-RUN npm install
-
-# Copy the rest of the application code
 COPY . .
+RUN npm run build
 
-# Expose the port the app runs on
-EXPOSE 5173
+FROM nginx:1.27-alpine
 
-# Define the command to run the app
-# Run dev server (Vite will load .env at runtime)
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+
+EXPOSE 80

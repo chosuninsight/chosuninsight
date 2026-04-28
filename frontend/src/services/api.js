@@ -1,6 +1,6 @@
 // src/services/api.js
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 /**
  * 백엔드 RAG 서버와 통신하여 답변을 받아오는 함수
