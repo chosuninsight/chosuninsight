@@ -104,6 +104,24 @@ def load_academic_policies() -> list[dict[str, Any]]:
 
 
 ACADEMIC_POLICIES = load_academic_policies()
+CREDIT_PROGRESS_PATTERN = re.compile(
+    r"(?P<area>교양|전공|주전공|복수전공|복수|총|전체)?\s*"
+    r"(?P<credits>\d{1,3})\s*(?:학점)?\s*"
+    r"(?P<verb>들었|들엇|이수|수강|채웠|채웟|완료|했|햇)?"
+)
+CREDIT_FOLLOWUP_KEYWORDS = [
+    "졸업 가능",
+    "가능해",
+    "가능할",
+    "뭐가 부족",
+    "얼마나 부족",
+    "몇 학점",
+    "남았",
+    "남은",
+    "부족",
+    "채우면",
+    "계산",
+]
 
 # =====================================
 # 1. FastAPI 기본 설정
@@ -564,6 +582,270 @@ def policy_matches_query(policy: dict[str, Any], query: str, focus_terms: list[s
     )
 
 
+def find_graduation_policy_for_text(text: str) -> dict[str, Any] | None:
+    normalized_text = normalize_entities(text).lower()
+    matching_policies = []
+
+    for policy in ACADEMIC_POLICIES:
+        if policy.get("policy_type") != "graduation_credits" or not policy.get("is_latest"):
+            continue
+
+        aliases = [
+            str(policy.get("department", "")),
+            *[str(alias) for alias in policy.get("aliases", [])],
+        ]
+        normalized_aliases = []
+        for alias in aliases:
+            normalized_alias = normalize_entities(alias).lower()
+            if not normalized_alias:
+                continue
+            normalized_aliases.append(normalized_alias)
+            for suffix in ["과", "전공", "학과"]:
+                if normalized_alias.endswith(suffix):
+                    normalized_aliases.append(normalized_alias.removesuffix(suffix))
+        if any(alias and alias in normalized_text for alias in normalized_aliases):
+            matching_policies.append(policy)
+
+    if not matching_policies:
+        return None
+
+    matching_policies.sort(
+        key=lambda policy: (
+            int(policy.get("priority", 0)),
+            int(policy.get("academic_year", 0)),
+        ),
+        reverse=True,
+    )
+    return matching_policies[0]
+
+
+def build_graduation_policy_answer(question: str, history: list[ChatHistoryMessage], interpretation: dict[str, Any] | None = None) -> str | None:
+    intent = str((interpretation or {}).get("intent", ""))
+    normalized_question = normalize_entities(question)
+    is_graduation_policy_question = (
+        intent in {"graduation_policy_question", "graduation_credit_check"}
+        or any(keyword in normalized_question for keyword in ["졸업요건", "졸업학점", "졸업 이수", "이수학점"])
+    )
+    if not is_graduation_policy_question:
+        return None
+
+    combined_text = conversation_text(question, history)
+    interpreted_department = str((interpretation or {}).get("department", "") or "")
+    if interpreted_department:
+        combined_text = f"{combined_text}\n{interpreted_department}"
+
+    policy = find_graduation_policy_for_text(combined_text)
+    if not policy:
+        return None
+
+    department = policy.get("department", "해당 학과")
+    cohort = policy.get("admission_cohort", "최신 기준")
+    lines = [
+        f"{department} {cohort} 졸업요건 중 학점 기준은 다음과 같습니다.",
+        f"- 총 이수학점: {policy.get('minimum_total_credits')}학점",
+        f"- 교양학점: {policy.get('general_education_credits')}학점",
+        f"- 단일전공 전공학점: {policy.get('single_major_credits')}학점",
+        f"- 잔여/자유 이수학점: {policy.get('remaining_credits')}학점",
+        f"- 복수·연계전공 주전공 학점: {policy.get('multiple_major_primary_credits')}학점",
+        f"- 복수전공 학점: {policy.get('multiple_major_credits')}학점",
+    ]
+    if policy.get("note"):
+        lines.append(str(policy["note"]))
+    lines.append("세부 졸업요건은 입학연도, 전공트랙, 교과과정에 따라 달라질 수 있어요.")
+    return "\n".join(lines)
+
+
+def normalize_credit_area(area: str) -> str:
+    normalized_area = normalize_entities(area.strip())
+    lowered_area = normalized_area.lower()
+    if lowered_area in {"major", "single_major", "전공학점"}:
+        return "전공"
+    if lowered_area in {"primary_major", "주전공"}:
+        return "주전공"
+    if lowered_area in {"general", "general_education", "교양학점"}:
+        return "교양"
+    if lowered_area in {"total", "overall", "전체", "전체학점", "총학점"}:
+        return "총"
+    if lowered_area in {"multiple_major", "double_major", "복수", "복수전공학점"}:
+        return "복수전공"
+    return normalized_area
+
+
+def extract_credit_progress_entries(text: str) -> list[tuple[str, int]]:
+    normalized_text = normalize_entities(text)
+    entries = []
+    for match in CREDIT_PROGRESS_PATTERN.finditer(normalized_text):
+        area = match.group("area") or ""
+        credits = int(match.group("credits"))
+        verb = match.group("verb") or ""
+        if not area and not verb:
+            continue
+        if not area and "학점" not in normalized_text:
+            continue
+        entries.append((normalize_credit_area(area), credits))
+    return entries
+
+
+def extract_credit_progress(question: str) -> tuple[str, int] | None:
+    entries = extract_credit_progress_entries(question)
+    return entries[0] if entries else None
+
+
+def conversation_text(question: str, history: list[ChatHistoryMessage], max_messages: int = 8) -> str:
+    history_text = "\n".join(message.content for message in history[-max_messages:] if message.content.strip())
+    return f"{history_text}\n{question}"
+
+
+def question_asks_credit_followup(question: str) -> bool:
+    normalized_question = normalize_entities(question).lower()
+    return any(keyword in normalized_question for keyword in CREDIT_FOLLOWUP_KEYWORDS)
+
+
+def build_credit_progress_state(question: str, history: list[ChatHistoryMessage]) -> dict[str, int]:
+    progress: dict[str, int] = {}
+    for message in history[-8:]:
+        if message.role != "user":
+            continue
+        for area, credits in extract_credit_progress_entries(message.content):
+            if area:
+                progress[area] = credits
+    for area, credits in extract_credit_progress_entries(question):
+        if area:
+            progress[area] = credits
+    return progress
+
+
+def credit_progress_from_interpretation(interpretation: dict[str, Any] | None) -> dict[str, int]:
+    if not interpretation:
+        return {}
+
+    interpreted_progress = interpretation.get("credit_progress", [])
+    if not isinstance(interpreted_progress, list):
+        return {}
+
+    progress: dict[str, int] = {}
+    for item in interpreted_progress:
+        if not isinstance(item, dict):
+            continue
+        area = normalize_credit_area(str(item.get("area", "")))
+        credits = item.get("credits")
+        try:
+            parsed_credits = int(credits)
+        except (TypeError, ValueError):
+            continue
+        if area:
+            progress[area] = parsed_credits
+    return progress
+
+
+def has_unscoped_credit_progress(question: str) -> bool:
+    normalized_question = normalize_entities(question)
+    if any(area in normalized_question for area in ["전공", "교양", "총", "전체", "복수", "주전공"]):
+        return False
+    return re.search(r"\d{1,3}\s*(?:학점)?\s*(들었|들엇|이수|수강|채웠|채웟|완료|했|햇)", normalized_question) is not None
+
+
+def build_credit_gap_line(label: str, required: Any, completed: int) -> str | None:
+    try:
+        required_credits = int(required)
+    except (TypeError, ValueError):
+        return None
+
+    remaining = max(required_credits - completed, 0)
+    if remaining == 0:
+        return f"- {label}: 기준 {required_credits}학점, 현재 {completed}학점으로 기준을 충족했습니다."
+    return f"- {label}: 기준 {required_credits}학점, 현재 {completed}학점으로 {remaining}학점이 더 필요합니다."
+
+
+def append_credit_gap_for_area(lines: list[str], policy: dict[str, Any], area: str, completed: int, question: str) -> None:
+    question_text = normalize_entities(question)
+
+    if area == "교양":
+        line = build_credit_gap_line("교양학점", policy.get("general_education_credits"), completed)
+        if line:
+            lines.append(line)
+        return
+
+    if area == "총":
+        line = build_credit_gap_line("총 이수학점", policy.get("minimum_total_credits"), completed)
+        if line:
+            lines.append(line)
+        return
+
+    if area == "복수전공" and "주전공" not in question_text:
+        line = build_credit_gap_line("복수전공 학점", policy.get("multiple_major_credits"), completed)
+        if line:
+            lines.append(line)
+        return
+
+    single_line = build_credit_gap_line("단일전공 전공학점", policy.get("single_major_credits"), completed)
+    if single_line:
+        lines.append(single_line)
+
+    multiple_line = build_credit_gap_line("복수·연계전공 주전공 학점", policy.get("multiple_major_primary_credits"), completed)
+    if multiple_line:
+        lines.append(multiple_line)
+
+
+def build_graduation_credit_progress_answer(
+    question: str,
+    history: list[ChatHistoryMessage],
+    interpretation: dict[str, Any] | None = None,
+) -> str | None:
+    current_progress = extract_credit_progress_entries(question)
+    progress_state = build_credit_progress_state(question, history)
+    interpreted_progress = credit_progress_from_interpretation(interpretation)
+    combined_text = conversation_text(question, history)
+    normalized_combined_for_progress = normalize_entities(combined_text)
+    if "총" in interpreted_progress and not any(marker in normalized_combined_for_progress for marker in ["총", "전체"]):
+        interpreted_progress.pop("총", None)
+    progress_state.update(interpreted_progress)
+
+    intent = str((interpretation or {}).get("intent", ""))
+    is_credit_intent = intent in {"graduation_credit_check", "graduation_credit_progress", "graduation_planning"}
+    missing_fields = interpretation.get("missing_fields", []) if interpretation else []
+
+    if has_unscoped_credit_progress(question) and ("credit_area" in missing_fields or is_credit_intent):
+        return "50학점이라고 말씀하신 건 확인했어요. 전공학점, 교양학점, 총 이수학점 중 어떤 기준인지 알려주시면 졸업요건에 맞춰 바로 계산해드릴게요."
+
+    if not current_progress and not interpreted_progress and not (progress_state and (question_asks_credit_followup(question) or is_credit_intent)):
+        return None
+
+    interpreted_department = str((interpretation or {}).get("department", "") or "")
+    if interpreted_department:
+        combined_text = f"{combined_text}\n{interpreted_department}"
+    normalized_combined = normalize_entities(combined_text).lower()
+    if not is_credit_intent and "졸업" not in normalized_combined and not any(term in normalized_combined for term in ["전공", "교양", "이수학점"]):
+        return None
+
+    policy = find_graduation_policy_for_text(combined_text)
+    if not policy:
+        if current_progress or interpreted_progress:
+            return "학점 계산을 하려면 학과/전공 정보가 필요합니다. 예를 들어 `컴공 전공 50학점 들었어`처럼 학과를 같이 알려주세요."
+        return None
+
+    if has_unscoped_credit_progress(question) and not progress_state:
+        return "몇 학점인지 확인했습니다. 다만 전공, 교양, 총 이수학점 중 어떤 영역인지 알려주면 졸업요건 기준으로 계산해드릴게요."
+
+    department = policy.get("department", "해당 학과")
+    cohort = policy.get("admission_cohort", "최신 기준")
+    lines = [f"{department} {cohort} 기준으로 보면요."]
+
+    for area, completed in progress_state.items():
+        append_credit_gap_for_area(lines, policy, area, completed, question)
+
+    note = policy.get("note")
+    if note:
+        lines.append(str(note))
+
+    if "총" not in progress_state:
+        lines.append("총 졸업학점 충족 여부까지 보려면 현재 총 이수학점도 같이 알려주세요.")
+
+    if len(lines) == 1:
+        return None
+    return "\n".join(lines)
+
+
 def format_academic_policy_content(policy: dict[str, Any]) -> str:
     lines = [
         "# 최신 졸업이수학점 기준",
@@ -919,7 +1201,67 @@ def build_contextual_search_query(question: str, history: list[ChatHistoryMessag
     return f"{history_text}\n현재 질문: {question}"
 
 
-async def get_gpt_response(question: str, context: str, history: list[ChatHistoryMessage]):
+async def interpret_chat_request(question: str, history: list[ChatHistoryMessage]) -> dict[str, Any]:
+    history_text = format_chat_history(history, max_messages=8, max_chars=1800)
+    system_prompt = """
+너는 조선대학교 챗봇의 대화 이해기야. 사용자의 현재 질문과 이전 대화를 보고 JSON만 반환해.
+
+반환 형식:
+{
+  "intent": "graduation_credit_check | graduation_policy_question | campus_info | notice_lookup | general_question",
+  "standalone_question": "이전 대명사와 생략된 대상을 복원한 독립 질문",
+  "department": "학과/전공명 또는 빈 문자열",
+  "topic": "graduation_credits | scholarship | cafeteria | academic_notice | other",
+  "credit_progress": [{"area": "major | primary_major | general | total | multiple_major", "credits": 0}],
+  "missing_fields": ["department", "credit_area", "total_credits", "general_credits"],
+  "should_answer_with_calculation": true,
+  "should_ask_clarifying_question": false
+}
+
+규칙:
+- 사용자가 말한 이수 학점은 사용자 제공 사실로 추출한다.
+- "그거", "그 학과", "졸업 가능해?", "괜찮아?" 같은 말은 이전 대화에서 대상을 복원한다.
+- 확실하지 않은 값은 만들지 말고 missing_fields에 넣는다.
+- JSON 외 텍스트는 쓰지 않는다.
+""".strip()
+    user_prompt = f"""
+[이전 대화]
+{history_text or "이전 대화 없음"}
+
+[현재 질문]
+{question}
+""".strip()
+
+    try:
+        response = await client.chat.completions.create(
+            model=CHAT_MODEL_NAME,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        content = response.choices[0].message.content or "{}"
+        parsed = json.loads(content)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception as exc:
+        print(f"⚠️ 대화 해석 실패: {exc}")
+        return {}
+
+
+def build_search_query_from_interpretation(question: str, history: list[ChatHistoryMessage], interpretation: dict[str, Any]) -> str:
+    standalone_question = str(interpretation.get("standalone_question", "")).strip()
+    if standalone_question:
+        return standalone_question
+    return build_contextual_search_query(question, history)
+
+
+async def get_gpt_response(
+    question: str,
+    context: str,
+    history: list[ChatHistoryMessage],
+    interpretation: dict[str, Any] | None = None,
+):
     system_prompt = """
 너는 조선대학교 정보 도우미야.
 반드시 제공된 참고 정보 안에서만 답변해.
@@ -927,6 +1269,8 @@ async def get_gpt_response(question: str, context: str, history: list[ChatHistor
 [답변 원칙]
 - 이전 대화는 "그거", "방금", "그 학과" 같은 후속 질문의 대상을 파악할 때만 사용해.
 - 실제 답변의 사실, 숫자, 날짜, 학점은 반드시 참고 정보에 있는 내용만 사용해.
+- 단, 사용자가 직접 말한 이수 학점, 학과, 상황은 계산 입력값으로 사용할 수 있어.
+- 정보가 부족하면 "해당 정보를 찾을 수 없습니다"보다 필요한 정보를 자연스럽게 물어봐.
 - 질문의 학과, 전공, 대상과 정확히 일치하는 정보만 사용해. 다른 학과 정보는 절대 섞지 마.
 - 숫자, 학점, 날짜, 학년도는 참고 정보에 명시된 값만 사용해. 추정하거나 일반화하지 마.
 - 참고 정보가 질문 대상과 정확히 맞지 않으면 "해당 정보를 찾을 수 없습니다."라고 답해.
@@ -940,10 +1284,14 @@ async def get_gpt_response(question: str, context: str, history: list[ChatHistor
 
     history_text = format_chat_history(history)
     history_block = history_text or "이전 대화 없음"
+    interpretation_block = json.dumps(interpretation or {}, ensure_ascii=False)
 
     user_prompt = f"""
 [이전 대화]
 {history_block}
+
+[질문 해석]
+{interpretation_block}
 
 [참고 정보]
 {context}
@@ -980,12 +1328,37 @@ def root():
     status_code=status.HTTP_200_OK
 )
 async def chat(req: ChatRequest):
-    search_query = build_contextual_search_query(req.question, req.history)
+    interpretation = await interpret_chat_request(req.question, req.history)
+    credit_progress_answer = build_graduation_credit_progress_answer(req.question, req.history, interpretation)
+    if credit_progress_answer:
+        return {
+            "success": True,
+            "answer": credit_progress_answer,
+            "sources": ["backend/data/academic_policies.json"],
+            "debug": {
+                "answer_mode": "graduation_credit_progress",
+                "interpretation": interpretation,
+            } if req.debug else None,
+        }
+
+    graduation_policy_answer = build_graduation_policy_answer(req.question, req.history, interpretation)
+    if graduation_policy_answer:
+        return {
+            "success": True,
+            "answer": graduation_policy_answer,
+            "sources": ["backend/data/academic_policies.json"],
+            "debug": {
+                "answer_mode": "graduation_policy",
+                "interpretation": interpretation,
+            } if req.debug else None,
+        }
+
+    search_query = build_search_query_from_interpretation(req.question, req.history, interpretation)
     search_result = search_docs(search_query)
     context = "\n".join(hit.content for hit in search_result.hits)
 
     try:
-        answer = await get_gpt_response(req.question, context, req.history)
+        answer = await get_gpt_response(req.question, context, req.history, interpretation)
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -996,7 +1369,7 @@ async def chat(req: ChatRequest):
         "success": True,
         "answer": answer,
         "sources": [hit.source for hit in search_result.hits],
-        "debug": search_result.debug if req.debug else None,
+        "debug": (search_result.debug | {"interpretation": interpretation}) if req.debug else None,
     }
 
 # =====================================
