@@ -1328,8 +1328,9 @@ def root():
     status_code=status.HTTP_200_OK
 )
 async def chat(req: ChatRequest):
-    interpretation = await interpret_chat_request(req.question, req.history)
-    credit_progress_answer = build_graduation_credit_progress_answer(req.question, req.history, interpretation)
+    history: list[ChatHistoryMessage] = []
+    interpretation = await interpret_chat_request(req.question, history)
+    credit_progress_answer = build_graduation_credit_progress_answer(req.question, history, interpretation)
     if credit_progress_answer:
         return {
             "success": True,
@@ -1341,7 +1342,7 @@ async def chat(req: ChatRequest):
             } if req.debug else None,
         }
 
-    graduation_policy_answer = build_graduation_policy_answer(req.question, req.history, interpretation)
+    graduation_policy_answer = build_graduation_policy_answer(req.question, history, interpretation)
     if graduation_policy_answer:
         return {
             "success": True,
@@ -1353,12 +1354,12 @@ async def chat(req: ChatRequest):
             } if req.debug else None,
         }
 
-    search_query = build_search_query_from_interpretation(req.question, req.history, interpretation)
+    search_query = build_search_query_from_interpretation(req.question, history, interpretation)
     search_result = search_docs(search_query)
     context = "\n".join(hit.content for hit in search_result.hits)
 
     try:
-        answer = await get_gpt_response(req.question, context, req.history, interpretation)
+        answer = await get_gpt_response(req.question, context, history, interpretation)
     except Exception as e:
         raise HTTPException(
             status_code=500,

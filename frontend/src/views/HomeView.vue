@@ -317,17 +317,6 @@ function now() {
   return `${h}:${m}`
 }
 
-function buildChatMemory() {
-  return messages.value
-    .filter(msg => (msg.who === 'user' || msg.who === 'bot') && msg.text)
-    .filter(msg => !msg.text.startsWith('안녕하세요! 조선대학교에 대해 궁금한 점을 물어보세요.'))
-    .slice(-8)
-    .map(msg => ({
-      role: msg.who === 'user' ? 'user' : 'assistant',
-      content: msg.text,
-    }))
-}
-
 // 사이드바 이벤트 핸들러
 function onNewChat() {
   messages.value = createNewChat()
@@ -358,14 +347,13 @@ async function sendMessage() {
   const text = inputText.value.trim()
   if (!text || isLoading.value) return
 
-  const history = buildChatMemory()
   addMessage('user', text)
   inputText.value = ''
   isLoading.value = true
   scrollToBottom()
 
   try {
-    const result = await fetchChatResponse(text, debugMode, history)
+    const result = await fetchChatResponse(text, debugMode)
     addMessage('bot', result.answer, result.links, result.debug)
   } catch (error) {
     addMessage('bot', '죄송합니다. 서버와 연결할 수 없습니다. 백엔드 서버(uvicorn) 상태를 확인해 주세요.')
