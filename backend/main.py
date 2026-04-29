@@ -541,13 +541,15 @@ def document_matches_intent(doc: IndexedDocument, plan: SearchPlan) -> bool:
 
 
 def extract_cohort_year(text: str) -> int | None:
-    matches = re.findall(r"(\d{4})\s*학년도|(\d{4})\s*년", text)
+    matches = re.findall(r"(\d{4})\s*학년도|(\d{4})\s*년|(\d{4})\s*학번|(?<!\d)(\d{2})\s*학번", text)
     years = []
 
-    for academic_year, year in matches:
-        raw = academic_year or year
+    for academic_year, calendar_year, student_year, short_student_year in matches:
+        raw = academic_year or calendar_year or student_year
         if raw:
             years.append(int(raw))
+        elif short_student_year:
+            years.append(2000 + int(short_student_year))
 
     return max(years) if years else None
 
@@ -584,10 +586,11 @@ def policy_matches_query(policy: dict[str, Any], query: str, focus_terms: list[s
 
 def find_graduation_policy_for_text(text: str) -> dict[str, Any] | None:
     normalized_text = normalize_entities(text).lower()
+    requested_year = extract_cohort_year(text)
     matching_policies = []
 
     for policy in ACADEMIC_POLICIES:
-        if policy.get("policy_type") != "graduation_credits" or not policy.get("is_latest"):
+        if policy.get("policy_type") != "graduation_credits":
             continue
 
         aliases = [
@@ -609,6 +612,26 @@ def find_graduation_policy_for_text(text: str) -> dict[str, Any] | None:
     if not matching_policies:
         return None
 
+    if requested_year is not None:
+        cohort_matches = [
+            policy for policy in matching_policies
+            if int(policy.get("academic_year", 0)) <= requested_year
+        ]
+        if cohort_matches:
+            cohort_matches.sort(
+                key=lambda policy: (
+                    int(policy.get("academic_year", 0)),
+                    int(policy.get("priority", 0)),
+                ),
+                reverse=True,
+            )
+            return cohort_matches[0]
+        return None
+
+    latest_matches = [policy for policy in matching_policies if policy.get("is_latest")]
+    if latest_matches:
+        matching_policies = latest_matches
+
     matching_policies.sort(
         key=lambda policy: (
             int(policy.get("priority", 0)),
@@ -617,6 +640,113 @@ def find_graduation_policy_for_text(text: str) -> dict[str, Any] | None:
         reverse=True,
     )
     return matching_policies[0]
+
+
+def find_latest_policy_for_text(text: str) -> dict[str, Any] | None:
+    normalized_text = normalize_entities(text).lower()
+    matching_policies = []
+
+    for policy in ACADEMIC_POLICIES:
+        if not policy.get("is_latest"):
+            continue
+
+        aliases = [
+            str(policy.get("department", "")),
+            *[str(alias) for alias in policy.get("aliases", [])],
+        ]
+        normalized_aliases = []
+        for alias in aliases:
+            normalized_alias = normalize_entities(alias).lower()
+            if not normalized_alias:
+                continue
+            normalized_aliases.append(normalized_alias)
+            for suffix in ["과", "전공", "학과"]:
+                if normalized_alias.endswith(suffix):
+                    normalized_aliases.append(normalized_alias.removesuffix(suffix))
+
+        if any(alias and alias in normalized_text for alias in normalized_aliases):
+            matching_policies.append(policy)
+
+    if not matching_policies:
+        return None
+
+    matching_policies.sort(
+        key=lambda policy: (
+            int(policy.get("priority", 0)),
+            int(policy.get("academic_year", 0)),
+        ),
+        reverse=True,
+    )
+    return matching_policies[0]
+
+
+def build_department_affiliation_answer(
+    question: str,
+    history: list[ChatHistoryMessage],
+    interpretation: dict[str, Any] | None = None,
+) -> str | None:
+    combined_text = conversation_text(question, history)
+    interpreted_department = str((interpretation or {}).get("department", "") or "")
+    if interpreted_department:
+        combined_text = f"{combined_text}\n{interpreted_department}"
+
+    normalized_question = normalize_entities(question).lower()
+    asks_affiliation = any(
+        keyword in normalized_question
+        for keyword in ["단과대학", "소속", "어느 대학", "무슨 대학", "대학이 어디", "college"]
+    )
+    if not asks_affiliation:
+        return None
+
+    policy = find_latest_policy_for_text(combined_text)
+    if not policy:
+        return None
+
+    department = policy.get("department", "해당 학과")
+    college = policy.get("college", "")
+    academic_year = policy.get("academic_year", "")
+    if not college:
+        return None
+
+    return f"{department}은 {academic_year}학년도 최신 기준으로 {college} 소속입니다."
+
+
+def build_department_summary_answer(
+    question: str,
+    history: list[ChatHistoryMessage],
+    interpretation: dict[str, Any] | None = None,
+) -> str | None:
+    normalized_question = normalize_entities(question).strip()
+    interpreted_department = str((interpretation or {}).get("department", "") or "").strip()
+    if not interpreted_department:
+        return None
+
+    policy = find_latest_policy_for_text(interpreted_department)
+    if not policy:
+        return None
+
+    department_terms = {normalize_entities(str(policy.get("department", "")))}
+    department_terms.update(normalize_entities(str(alias)) for alias in policy.get("aliases", []))
+    department_terms = {term for term in department_terms if term}
+    bare_department_question = normalized_question in department_terms
+    if not bare_department_question:
+        return None
+
+    department = policy.get("department", "해당 학과")
+    college = policy.get("college", "")
+    cohort = policy.get("admission_cohort", "최신 기준")
+    total_credits = policy.get("minimum_total_credits")
+    major_credits = policy.get("single_major_credits")
+    if not college:
+        return None
+
+    return "\n".join(
+        [
+            f"{department}은 {college} 소속입니다.",
+            f"{cohort} 졸업학점 기준은 총 {total_credits}학점, 단일전공 전공 {major_credits}학점입니다.",
+            "입학연도나 원하는 항목을 말해주면 그 기준으로 더 좁혀서 답할게요.",
+        ]
+    )
 
 
 def build_graduation_policy_answer(question: str, history: list[ChatHistoryMessage], interpretation: dict[str, Any] | None = None) -> str | None:
@@ -643,12 +773,20 @@ def build_graduation_policy_answer(question: str, history: list[ChatHistoryMessa
     lines = [
         f"{department} {cohort} 졸업요건 중 학점 기준은 다음과 같습니다.",
         f"- 총 이수학점: {policy.get('minimum_total_credits')}학점",
-        f"- 교양학점: {policy.get('general_education_credits')}학점",
-        f"- 단일전공 전공학점: {policy.get('single_major_credits')}학점",
-        f"- 잔여/자유 이수학점: {policy.get('remaining_credits')}학점",
-        f"- 복수·연계전공 주전공 학점: {policy.get('multiple_major_primary_credits')}학점",
-        f"- 복수전공 학점: {policy.get('multiple_major_credits')}학점",
     ]
+    if policy.get("special_integration"):
+        lines.append(f"- 공학교육인증 이수 기준: {policy.get('special_integration')}")
+    else:
+        lines.extend(
+            [
+                f"- 교양학점: {policy.get('general_education_credits')}학점",
+                f"- 단일전공 전공학점: {policy.get('single_major_credits')}학점",
+                f"- 잔여/자유 이수학점: {policy.get('remaining_credits')}학점",
+                f"- 복수·연계전공 주전공 학점: {policy.get('multiple_major_primary_credits')}학점",
+            ]
+        )
+    if policy.get("multiple_major_credits") is not None:
+        lines.append(f"- 복수전공 학점: {policy.get('multiple_major_credits')}학점")
     if policy.get("note"):
         lines.append(str(policy["note"]))
     lines.append("세부 졸업요건은 입학연도, 전공트랙, 교과과정에 따라 달라질 수 있어요.")
@@ -1328,7 +1466,7 @@ def root():
     status_code=status.HTTP_200_OK
 )
 async def chat(req: ChatRequest):
-    history: list[ChatHistoryMessage] = []
+    history = req.history
     interpretation = await interpret_chat_request(req.question, history)
     credit_progress_answer = build_graduation_credit_progress_answer(req.question, history, interpretation)
     if credit_progress_answer:
@@ -1338,6 +1476,30 @@ async def chat(req: ChatRequest):
             "sources": ["backend/data/academic_policies.json"],
             "debug": {
                 "answer_mode": "graduation_credit_progress",
+                "interpretation": interpretation,
+            } if req.debug else None,
+        }
+
+    department_affiliation_answer = build_department_affiliation_answer(req.question, history, interpretation)
+    if department_affiliation_answer:
+        return {
+            "success": True,
+            "answer": department_affiliation_answer,
+            "sources": ["backend/data/academic_policies.json"],
+            "debug": {
+                "answer_mode": "department_affiliation",
+                "interpretation": interpretation,
+            } if req.debug else None,
+        }
+
+    department_summary_answer = build_department_summary_answer(req.question, history, interpretation)
+    if department_summary_answer:
+        return {
+            "success": True,
+            "answer": department_summary_answer,
+            "sources": ["backend/data/academic_policies.json"],
+            "debug": {
+                "answer_mode": "department_summary",
                 "interpretation": interpretation,
             } if req.debug else None,
         }
