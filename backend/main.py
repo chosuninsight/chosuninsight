@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -121,9 +121,15 @@ app.add_middleware(
 # =====================================
 # 2. 요청 / 응답 모델
 # =====================================
+class ChatHistoryMessage(BaseModel):
+    role: str
+    content: str
+
+
 class ChatRequest(BaseModel):
     question: str
     debug: bool = False
+    history: list[ChatHistoryMessage] = Field(default_factory=list)
 
 class ChatResponse(BaseModel):
     success: bool
@@ -323,6 +329,7 @@ all_indexed_docs = (
     + load_collection_documents(vectorstore_update, "update")
 )
 indexed_doc_map = {doc.key: doc for doc in all_indexed_docs}
+indexed_doc_counts_by_store = Counter(doc.store for doc in all_indexed_docs)
 bm25_corpus = [tokenize_korean_text(doc.content) for doc in all_indexed_docs]
 bm25 = BM25Okapi(bm25_corpus) if bm25_corpus else None
 
@@ -358,7 +365,15 @@ def dedupe_preserve_order(doc_keys: list[str]) -> list[str]:
     return deduped
 
 def run_vector_search(vectorstore: Chroma, store_name: str, query: str, k: int) -> list[str]:
-    results = vectorstore.similarity_search_with_score(query, k=k)
+    if k <= 0 or indexed_doc_counts_by_store.get(store_name, 0) <= 0:
+        return []
+
+    try:
+        results = vectorstore.similarity_search_with_score(query, k=k)
+    except Exception as exc:
+        print(f"⚠️ {store_name} 벡터 검색 건너뜀: {exc}")
+        return []
+
     ranked_keys = []
 
     for doc, _score in results:
@@ -882,12 +897,36 @@ def search_docs(query: str) -> SearchResult:
 # =====================================
 # 🔥 5. GPT 응답 함수 추가
 # =====================================
-async def get_gpt_response(question: str, context: str):
+def format_chat_history(history: list[ChatHistoryMessage], max_messages: int = 8, max_chars: int = 1600) -> str:
+    lines = []
+    for message in history[-max_messages:]:
+        role = "사용자" if message.role == "user" else "도우미"
+        content = message.content.strip()
+        if not content:
+            continue
+        lines.append(f"{role}: {content}")
+
+    formatted = "\n".join(lines)
+    if len(formatted) > max_chars:
+        return formatted[-max_chars:]
+    return formatted
+
+
+def build_contextual_search_query(question: str, history: list[ChatHistoryMessage]) -> str:
+    history_text = format_chat_history(history, max_messages=6, max_chars=900)
+    if not history_text:
+        return question
+    return f"{history_text}\n현재 질문: {question}"
+
+
+async def get_gpt_response(question: str, context: str, history: list[ChatHistoryMessage]):
     system_prompt = """
 너는 조선대학교 정보 도우미야.
 반드시 제공된 참고 정보 안에서만 답변해.
 
 [답변 원칙]
+- 이전 대화는 "그거", "방금", "그 학과" 같은 후속 질문의 대상을 파악할 때만 사용해.
+- 실제 답변의 사실, 숫자, 날짜, 학점은 반드시 참고 정보에 있는 내용만 사용해.
 - 질문의 학과, 전공, 대상과 정확히 일치하는 정보만 사용해. 다른 학과 정보는 절대 섞지 마.
 - 숫자, 학점, 날짜, 학년도는 참고 정보에 명시된 값만 사용해. 추정하거나 일반화하지 마.
 - 참고 정보가 질문 대상과 정확히 맞지 않으면 "해당 정보를 찾을 수 없습니다."라고 답해.
@@ -899,7 +938,13 @@ async def get_gpt_response(question: str, context: str):
 - 사용자가 특정 학번이나 입학연도를 말하면 그 기준만 답해.
 """.strip()
 
+    history_text = format_chat_history(history)
+    history_block = history_text or "이전 대화 없음"
+
     user_prompt = f"""
+[이전 대화]
+{history_block}
+
 [참고 정보]
 {context}
 
@@ -935,11 +980,12 @@ def root():
     status_code=status.HTTP_200_OK
 )
 async def chat(req: ChatRequest):
-    search_result = search_docs(req.question)
+    search_query = build_contextual_search_query(req.question, req.history)
+    search_result = search_docs(search_query)
     context = "\n".join(hit.content for hit in search_result.hits)
 
     try:
-        answer = await get_gpt_response(req.question, context)
+        answer = await get_gpt_response(req.question, context, req.history)
     except Exception as e:
         raise HTTPException(
             status_code=500,
