@@ -5,16 +5,17 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 /**
  * 백엔드 RAG 서버와 통신하여 답변을 받아오는 함수
  * @param {string} question 사용자의 질문
- * @returns {Promise<{answer: string, sources: Array}>}
+ * @param {boolean} debug 디버그 정보 요청 여부
+ * @returns {Promise<{answer: string, links: Array, debug: object|null}>}
  */
-export const fetchChatResponse = async (question) => {
+export const fetchChatResponse = async (question, debug = false) => {
   try {
     const response = await fetch(`${API_BASE_URL}/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, debug }),
     });
 
     if (!response.ok) {
@@ -26,7 +27,8 @@ export const fetchChatResponse = async (question) => {
     // 백엔드 응답 구조: { success: true, documents: [...], sources: [...] }
     return {
       answer: data.answer, 
-      links: []
+      links: [],
+      debug: data.debug || null,
     };
   } catch (error) {
     console.error('API Error:', error);

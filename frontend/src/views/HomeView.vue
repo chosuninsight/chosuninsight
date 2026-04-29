@@ -56,6 +56,7 @@
             :text="msg.text"
             :time="msg.time"
             :links="msg.links"
+            :debug="msg.debug"
           />
           <!-- 로딩 애니메이션 -->
           <div v-if="isLoading" class="message-row bot">
@@ -307,6 +308,7 @@ const messages = ref(_restored ?? createNewChat())
 const inputText = ref('')
 const chatBox = ref(null)
 const isLoading = ref(false)
+const debugMode = import.meta.env.DEV || localStorage.getItem('chosun_debug') === 'true'
 
 function now() {
   const d = new Date()
@@ -351,8 +353,8 @@ async function sendMessage() {
   scrollToBottom()
 
   try {
-    const result = await fetchChatResponse(text)
-    addMessage('bot', result.answer, result.links)
+    const result = await fetchChatResponse(text, debugMode)
+    addMessage('bot', result.answer, result.links, result.debug)
   } catch (error) {
     addMessage('bot', '죄송합니다. 서버와 연결할 수 없습니다. 백엔드 서버(uvicorn) 상태를 확인해 주세요.')
   } finally {
@@ -372,8 +374,8 @@ function showBotReply(text, links = []) {
   }, 1000)
 }
 
-async function addMessage(who, text, links = []) {
-  messages.value.push({ who, text, time: now(), links })
+async function addMessage(who, text, links = [], debug = null) {
+  messages.value.push({ who, text, time: now(), links, debug })
   await nextTick()
   scrollToBottom()
 }

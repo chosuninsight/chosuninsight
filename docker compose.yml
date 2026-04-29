@@ -9,6 +9,8 @@ services:
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - ./Update_date.py:/app/Update_date.py
+      - ./rag_pipeline.py:/app/rag_pipeline.py
+      - ./rebuild_chroma.py:/app/rebuild_chroma.py
       - ./chosun_rag_data:/app/chosun_rag_data
       - ./chroma_db_update:/root/chroma_db_update
       - tmp_sync:/root/tmp
@@ -23,6 +25,7 @@ services:
       context: .
       dockerfile: ./backend/Dockerfile
     container_name: chosun_backend
+    restart: unless-stopped
     entrypoint: >
       sh -c "
       echo '[/root/tmp] waiting for update flag...' &&
@@ -34,6 +37,8 @@ services:
       "
     volumes:
       - ./backend:/app/backend
+      - ./rag_pipeline.py:/app/rag_pipeline.py
+      - ./rebuild_chroma.py:/app/rebuild_chroma.py
       - ./chroma_db_store:/app/chroma_db
       - ./chroma_db_update:/root/chroma_db_update
       - ./chosun_rag_data:/app/chosun_rag_data

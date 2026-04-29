@@ -1,6 +1,5 @@
 import os
 import time
-import shutil
 from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
@@ -13,7 +12,8 @@ import schedule
 
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_core.documents import Document
+
+from rag_pipeline import add_documents_in_batches, build_structured_chunks, clear_directory_contents
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -54,7 +54,6 @@ def create_webdriver():
 
     chromedriver_path = os.getenv("CHROMEDRIVER_PATH", "/usr/bin/chromedriver")
     return webdriver.Chrome(service=Service(chromedriver_path), options=options)
-
 # =====================================================================
 # 1~6. 웹 크롤링 수집 함수들 (변경 없음, DATA_SAVE_DIR에 저장)
 # =====================================================================
@@ -305,15 +304,7 @@ def update_daily_chroma_db():
         # 1. 기존에 갱신용 DB 폴더가 있다면 과감하게 삭제 (초기화)
         if os.path.exists(UPDATE_DB_DIR):
             print(f"  🗑️ {UPDATE_DB_DIR} 내부의 기존 데이터를 삭제합니다.")
-            for filename in os.listdir(UPDATE_DB_DIR):
-                file_path = os.path.join(UPDATE_DB_DIR, filename)
-                try:
-                    if os.path.isfile(file_path) or os.path.islink(file_path):
-                        os.unlink(file_path) # 파일 삭제
-                    elif os.path.isdir(file_path):
-                        shutil.rmtree(file_path) # 하위 폴더 삭제
-                except Exception as e:
-                    print(f"  ⚠️ {file_path} 삭제 실패: {e}")
+            clear_directory_contents(UPDATE_DB_DIR)
             time.sleep(1)
 
         # 2. 완전히 깨끗한 새 DB 컬렉션 생성
@@ -325,23 +316,19 @@ def update_daily_chroma_db():
         
         all_documents = []
 
-        # 3. 바탕화면 전용 폴더에 모인 txt 파일들을 읽어서 청크로 쪼개기
+        # 3. 수집 텍스트를 정규화하고 구조적 청크로 분해
         for filename in os.listdir(DATA_SAVE_DIR):
             if not filename.endswith(".txt"): continue
             
             filepath = os.path.join(DATA_SAVE_DIR, filename)
             with open(filepath, "r", encoding="utf-8") as f:
                 content = f.read()
-                
-            chunks = [c.strip() for c in content.split("---") if c.strip()]
-            
-            for i, chunk in enumerate(chunks):
-                metadata = {"source": filename, "chunk_index": i}
-                all_documents.append(Document(page_content=chunk, metadata=metadata))
+
+            all_documents.extend(build_structured_chunks(content, filename, profile_name="update"))
                 
         # 4. 새 DB에 오늘 수집한 데이터 통째로 밀어넣기
         if all_documents:
-            vectorstore.add_documents(all_documents)
+            add_documents_in_batches(vectorstore, all_documents)
             print(f"  ✨ 전용 DB 생성 완료! (총 {len(all_documents)}개 청크 이식됨)")
                 
         print("="*60 + "\n")
