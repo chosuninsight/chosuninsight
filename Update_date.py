@@ -374,18 +374,24 @@ def run_pipeline():
     print("🎉 [파이프라인 완료] 오늘의 교내 데이터 수집 및 전용 DB 갱신이 끝났습니다.")
 
 if __name__ == "__main__":
-    # 프로그램을 켜자마자 즉시 1회 전체 파이프라인 실행
-    run_pipeline()
+    # 1. 플래그 파일이 있는지, 그리고 그 파일이 '오늘' 생성된 것인지 확인
+    should_run_now = True
+    if os.path.exists(FLAG_FILE_PATH):
+        # 파일 수정 시간(mtime)을 가져와 오늘 날짜와 비교
+        file_mtime = os.path.getmtime(FLAG_FILE_PATH)
+        last_update_date = datetime.fromtimestamp(file_mtime).date()
+        
+        if last_update_date == datetime.now().date():
+            print("✅ 오늘 이미 업데이트가 완료되었습니다. 초기 실행을 건너뜁니다.")
+            should_run_now = False[cite: 5]
+
+    # 2. 오늘 한 번도 안 돌았을 때만 즉시 실행
+    if should_run_now:
+        print("🚀 오늘 첫 구동입니다. 파이프라인을 시작합니다.")
+        run_pipeline()[cite: 5]
     
-    # 매일 한국시간 오전 9시에 반복 실행되도록 스케줄 등록
-    # (주의: 코드가 실행되는 컴퓨터의 시스템 시간이 한국 시간(KST)으로 설정되어 있어야 합니다)
-    schedule.every().day.at("09:00").do(run_pipeline)
-    
-    print("⏰ 파이프라인 스케줄러가 백그라운드에서 가동 중입니다...")
-    print(f"📁 텍스트 파일 모음 폴더: {DATA_SAVE_DIR}")
-    print(f"🧠 갱신 데이터 전용 DB 폴더: {UPDATE_DB_DIR}")
-    print("※ 매일 오전 9시에 자동 갱신됩니다. 이 터미널 창을 닫지 마세요.")
-    print("※ 종료하시려면 Ctrl + C 를 누르세요.\n")
+    # 3. 정기 스케줄 등록 (매일 오전 9시)
+    schedule.every().day.at("09:00").do(run_pipeline)[cite: 5]
     
     while True:
         schedule.run_pending()
