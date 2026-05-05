@@ -1,5 +1,7 @@
 import os
+import shutil
 import time
+import uuid
 from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
@@ -297,26 +299,26 @@ def crawl_cafeteria_menus():
 def update_daily_chroma_db():
     print("\n" + "="*60)
     print("🧠 [전용 DB 생성 시작] 기존 갱신 DB를 비우고 오늘의 데이터로 꽉 채웁니다...")
+    temp_update_dir = f"{UPDATE_DB_DIR}.tmp-{uuid.uuid4().hex}"
     
     try:
         embeddings = HuggingFaceEmbeddings(model_name="jhgan/ko-sroberta-multitask")
-        
-        # 1. 기존에 갱신용 DB 폴더가 있다면 과감하게 삭제 (초기화)
-        if os.path.exists(UPDATE_DB_DIR):
-            print(f"  🗑️ {UPDATE_DB_DIR} 내부의 기존 데이터를 삭제합니다.")
-            clear_directory_contents(UPDATE_DB_DIR)
-            time.sleep(1)
 
-        # 2. 완전히 깨끗한 새 DB 컬렉션 생성
+        # 1. 완전히 분리된 임시 경로에 새 DB를 먼저 완성한다.
+        # 같은 경로를 비운 직후 재사용하면 Chroma 내부 SQLite 상태가 깨지는 경우가 있다.
+        if os.path.exists(temp_update_dir):
+            shutil.rmtree(temp_update_dir)
+        os.makedirs(temp_update_dir, exist_ok=True)
+
         vectorstore = Chroma(
-            persist_directory=UPDATE_DB_DIR, 
+            persist_directory=temp_update_dir,
             embedding_function=embeddings, 
             collection_name=UPDATE_COLLECTION_NAME
         )
         
         all_documents = []
 
-        # 3. 수집 텍스트를 정규화하고 구조적 청크로 분해
+        # 2. 수집 텍스트를 정규화하고 구조적 청크로 분해
         for filename in os.listdir(DATA_SAVE_DIR):
             if not filename.endswith(".txt"): continue
             
@@ -326,15 +328,26 @@ def update_daily_chroma_db():
 
             all_documents.extend(build_structured_chunks(content, filename, profile_name="update"))
                 
-        # 4. 새 DB에 오늘 수집한 데이터 통째로 밀어넣기
+        # 3. 새 DB에 오늘 수집한 데이터 통째로 밀어넣기
         if all_documents:
             add_documents_in_batches(vectorstore, all_documents)
             print(f"  ✨ 전용 DB 생성 완료! (총 {len(all_documents)}개 청크 이식됨)")
+
+        # 4. 임시 DB 생성이 성공한 뒤에만 운영 DB 폴더를 교체한다.
+        print(f"  🗑️ {UPDATE_DB_DIR} 내부의 기존 데이터를 삭제합니다.")
+        clear_directory_contents(UPDATE_DB_DIR)
+        for filename in os.listdir(temp_update_dir):
+            shutil.move(
+                os.path.join(temp_update_dir, filename),
+                os.path.join(UPDATE_DB_DIR, filename),
+            )
                 
         print("="*60 + "\n")
         
     except Exception as e:
         print(f"\n❌ 전용 DB 업데이트 중 오류 발생: {e}")
+    finally:
+        shutil.rmtree(temp_update_dir, ignore_errors=True)
 
 # =====================================================================
 # 통합 실행 및 스케줄러 관리

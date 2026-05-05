@@ -56,7 +56,9 @@
             :text="msg.text"
             :time="msg.time"
             :links="msg.links"
+            :suggestions="msg.suggestions"
             :debug="msg.debug"
+            @suggestion-click="sendSuggestedMessage"
           />
           <!-- 로딩 애니메이션 -->
           <div v-if="isLoading" class="message-row bot">
@@ -346,15 +348,23 @@ function onMenuClick(label) {
 async function sendMessage() {
   const text = inputText.value.trim()
   if (!text || isLoading.value) return
-
-  addMessage('user', text)
+  await submitMessage(text)
   inputText.value = ''
+}
+
+async function sendSuggestedMessage(text) {
+  if (!text || isLoading.value) return
+  await submitMessage(text)
+}
+
+async function submitMessage(text) {
+  addMessage('user', text)
   isLoading.value = true
   scrollToBottom()
 
   try {
-    const result = await fetchChatResponse(text, debugMode)
-    addMessage('bot', result.answer, result.links, result.debug)
+    const result = await fetchChatResponse(text, debugMode, currentChatId.value)
+    addMessage('bot', result.answer, result.links, result.debug, result.suggestions)
   } catch (error) {
     addMessage('bot', '죄송합니다. 서버와 연결할 수 없습니다. 백엔드 서버(uvicorn) 상태를 확인해 주세요.')
   } finally {
@@ -374,8 +384,8 @@ function showBotReply(text, links = []) {
   }, 1000)
 }
 
-async function addMessage(who, text, links = [], debug = null) {
-  messages.value.push({ who, text, time: now(), links, debug })
+async function addMessage(who, text, links = [], debug = null, suggestions = []) {
+  messages.value.push({ who, text, time: now(), links, debug, suggestions })
   await nextTick()
   scrollToBottom()
 }

@@ -1,0 +1,119 @@
+[
+  {
+    "name": "faculty_fulltime",
+    "question": "컴퓨터공학과 전임교수 알려줘",
+    "expected_mode": "faculty_profile",
+    "must_include": ["김판구", "정호엽", "AI·SW학부"]
+  },
+  {
+    "name": "faculty_name_office",
+    "question": "김판구 교수 연구실 어디야",
+    "expected_mode": "faculty_profile",
+    "must_include": ["김판구", "IT-7111"]
+  },
+  {
+    "name": "faculty_field",
+    "question": "컴퓨터비전 교수 누구야",
+    "expected_mode": "faculty_profile",
+    "must_include": ["정호엽", "컴퓨터비젼"]
+  },
+  {
+    "name": "faculty_electronics",
+    "question": "전자공학과 전임교수 알려줘",
+    "expected_mode": "faculty_profile",
+    "must_include": ["고낙용", "이진이", "반성범"]
+  },
+  {
+    "name": "faculty_electronics_name",
+    "question": "고낙용 교수 연구실 어디야",
+    "expected_mode": "faculty_profile",
+    "must_include": ["고낙용", "지능로봇실험실", "062-230-7108"]
+  },
+  {
+    "name": "faculty_architecture",
+    "question": "건축학과 교수진 알려줘",
+    "expected_mode": "faculty_profile",
+    "must_include": ["김인호", "염대봉", "건축설계"]
+  },
+  {
+    "name": "faculty_field_without_department",
+    "question": "소방공학 교수 누구야",
+    "expected_mode": "faculty_profile",
+    "must_include": ["오륜석", "소방공학", "7773"]
+  },
+  {
+    "name": "calendar_final_exam",
+    "question": "기말고사 언제야",
+    "expected_mode": "academic_calendar_2026",
+    "must_include": ["2026년 6월 15일", "24일"]
+  },
+  {
+    "name": "calendar_fall_midterm",
+    "question": "2학기 중간고사 언제야",
+    "expected_mode": "academic_calendar_2026",
+    "must_include": ["2026년 10월 19일", "23일"]
+  },
+  {
+    "name": "general_ed_2023",
+    "question": "23학번 교양교육과정 알려줘",
+    "expected_mode": "general_education_2023",
+    "must_include": ["함께형교양", "기초교양", "균형교양", "융합교양"]
+  },
+  {
+    "name": "general_ed_followup",
+    "question": "함께형 말고 다른 교양은?",
+    "history": [
+      {"role": "user", "content": "23학번 교양교육과정 알려줘"},
+      {"role": "assistant", "content": "2023학년도 이후 입학생 교양교육과정은 최소 30학점입니다."}
+    ],
+    "expected_mode": "general_education_2023",
+    "must_include": ["기초교양", "균형교양", "융합교양"],
+    "must_not_include": ["- 함께형교양"]
+  },
+  {
+    "name": "cs_general_credit_2023",
+    "question": "2023학년 컴퓨터공학과 교양 이수학점",
+    "expected_mode": "graduation_policy",
+    "must_include": ["컴퓨터공학과", "30학점"]
+  },
+  {
+    "name": "grad_followup_general_credit",
+    "question": "교양 이수학점은?",
+    "history": [
+      {"role": "user", "content": "2023학년 컴퓨터공학과 졸업요건 알려줘"},
+      {"role": "assistant", "content": "컴퓨터공학과 2023학년도 이후 입학생 기준입니다."}
+    ],
+    "expected_mode": "graduation_policy",
+    "must_include": ["컴퓨터공학과", "30학점"]
+  },
+  {
+    "name": "library_rag",
+    "question": "도서관 이용 방법 알려줘",
+    "expected_mode": "rag",
+    "must_include": ["도서관"]
+  },
+  {
+    "name": "clarify_graduation_department",
+    "question": "졸업요건 알려줘",
+    "expected_mode": "clarifying_question",
+    "must_include": ["학과", "2023학번 컴퓨터공학과 졸업요건"]
+  },
+  {
+    "name": "clarify_general_education_cohort",
+    "question": "교양교육과정 알려줘",
+    "expected_mode": "clarifying_question",
+    "must_include": ["학번", "입학연도"]
+  },
+  {
+    "name": "clarify_faculty_department",
+    "question": "교수 연락처 알려줘",
+    "expected_mode": "clarifying_question",
+    "must_include": ["학과", "컴퓨터공학과 교수진"]
+  },
+  {
+    "name": "clarify_calendar_event",
+    "question": "학사일정 알려줘",
+    "expected_mode": "clarifying_question",
+    "must_include": ["어떤 학사일정", "기말고사"]
+  }
+]

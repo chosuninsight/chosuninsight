@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -18,6 +18,7 @@ from rank_bm25 import BM25Okapi
 
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
+from backend.memory import ConversationMemoryStore
 from rag_pipeline import normalize_entities
 
 load_dotenv()
@@ -36,6 +37,9 @@ VECTOR_TOP_K = int(os.getenv("VECTOR_TOP_K", "6"))
 BM25_TOP_K = int(os.getenv("BM25_TOP_K", "6"))
 HYBRID_TOP_K = int(os.getenv("HYBRID_TOP_K", "6"))
 RRF_K = int(os.getenv("RRF_K", "60"))
+CHAT_MEMORY_ENABLED = os.getenv("CHAT_MEMORY_ENABLED", "true").lower() not in {"0", "false", "no"}
+CHAT_MEMORY_TTL_SECONDS = int(os.getenv("CHAT_MEMORY_TTL_SECONDS", "86400"))
+CHAT_MEMORY_MAX_SESSIONS = int(os.getenv("CHAT_MEMORY_MAX_SESSIONS", "500"))
 QUERY_EXPANSION_RULES = {
     "컴공": ["컴퓨터공학과", "컴퓨터공학전공"],
     "컴퓨터공학과": ["컴퓨터공학전공", "컴공"],
@@ -84,6 +88,8 @@ STORE_PRIORITY_RULES = {
     ],
 }
 ACADEMIC_POLICY_PATH = Path(__file__).resolve().parent / "data" / "academic_policies.json"
+ACADEMIC_REFERENCE_PATH = Path(__file__).resolve().parent / "data" / "academic_reference_answers.json"
+FACULTY_PROFILE_PATH = Path(__file__).resolve().parent / "data" / "faculty_profiles.json"
 ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
@@ -94,6 +100,10 @@ ALLOWED_ORIGINS = [
 ]
 
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+conversation_memory = ConversationMemoryStore(
+    ttl_seconds=CHAT_MEMORY_TTL_SECONDS,
+    max_sessions=CHAT_MEMORY_MAX_SESSIONS,
+)
 
 
 def load_academic_policies() -> list[dict[str, Any]]:
@@ -104,6 +114,28 @@ def load_academic_policies() -> list[dict[str, Any]]:
 
 
 ACADEMIC_POLICIES = load_academic_policies()
+
+
+def load_academic_references() -> dict[str, Any]:
+    try:
+        data = json.loads(ACADEMIC_REFERENCE_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+ACADEMIC_REFERENCES = load_academic_references()
+
+
+def load_faculty_profiles() -> list[dict[str, Any]]:
+    try:
+        data = json.loads(FACULTY_PROFILE_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    return data if isinstance(data, list) else []
+
+
+FACULTY_PROFILES = load_faculty_profiles()
 CREDIT_PROGRESS_PATTERN = re.compile(
     r"(?P<area>교양|전공|주전공|복수전공|복수|총|전체)?\s*"
     r"(?P<credits>\d{1,3})\s*(?:학점)?\s*"
@@ -145,14 +177,17 @@ class ChatHistoryMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     question: str
     debug: bool = False
-    history: list[ChatHistoryMessage] = Field(default_factory=list)
+    session_id: str | None = None
 
 class ChatResponse(BaseModel):
     success: bool
     answer: str
     sources: list
+    suggestions: list[str] = Field(default_factory=list)
     debug: dict[str, Any] | None = None
 
 @dataclass(frozen=True)
@@ -185,6 +220,23 @@ class SearchHit:
 class SearchResult:
     hits: list[SearchHit]
     debug: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ConversationState:
+    standalone_question: str
+    department: str
+    cohort_year: int | None
+    domain_intent: str
+    topic: str
+
+
+@dataclass(frozen=True)
+class StructuredAnswer:
+    answer: str
+    sources: list[str]
+    answer_mode: str
+    suggestion_context: str = ""
 
 
 def resolve_collection_name(persist_directory: str, preferred_name: str, fallback_names: list[str]) -> str:
@@ -541,11 +593,11 @@ def document_matches_intent(doc: IndexedDocument, plan: SearchPlan) -> bool:
 
 
 def extract_cohort_year(text: str) -> int | None:
-    matches = re.findall(r"(\d{4})\s*학년도|(\d{4})\s*년|(\d{4})\s*학번|(?<!\d)(\d{2})\s*학번", text)
+    matches = re.findall(r"(\d{4})\s*학년도|(\d{4})\s*학년|(\d{4})\s*년|(\d{4})\s*학번|(?<!\d)(\d{2})\s*학번", text)
     years = []
 
-    for academic_year, calendar_year, student_year, short_student_year in matches:
-        raw = academic_year or calendar_year or student_year
+    for academic_year, school_year, calendar_year, student_year, short_student_year in matches:
+        raw = academic_year or school_year or calendar_year or student_year
         if raw:
             years.append(int(raw))
         elif short_student_year:
@@ -749,6 +801,553 @@ def build_department_summary_answer(
     )
 
 
+def question_mentions_faculty(question: str) -> bool:
+    normalized_question = normalize_entities(question).lower()
+    return any(keyword in normalized_question for keyword in ["교수", "교수진", "전임교수"])
+
+
+def question_mentions_computer_science(question: str, interpretation: dict[str, Any] | None = None) -> bool:
+    combined = question
+    interpreted_department = str((interpretation or {}).get("department", "") or "")
+    if interpreted_department:
+        combined = f"{combined}\n{interpreted_department}"
+    normalized_text = normalize_entities(combined).lower()
+    return any(term in normalized_text for term in ["컴퓨터공학과", "컴퓨터공학전공", "컴공", "ai·sw학부"])
+
+
+def normalize_faculty_lookup_text(text: str) -> str:
+    return normalize_entities(text).lower().replace("비전", "비젼").replace(" ", "")
+
+
+FACULTY_FIELD_STOPWORDS = {
+    "교수",
+    "부교수",
+    "조교수",
+    "컴퓨터",
+    "공학",
+    "연구",
+    "분야",
+    "전공",
+    "시스템",
+    "실험실",
+    "전화번호",
+    "연구실",
+    "교수실",
+    "안전성",
+    "개선",
+    "등",
+    "ai",
+    "hci",
+}
+
+
+def profile_aliases(profile: dict[str, Any]) -> list[str]:
+    aliases = [
+        str(profile.get("department", "")),
+        str(profile.get("display_department", "")),
+        *[str(alias) for alias in profile.get("aliases", [])],
+    ]
+    return [alias for alias in aliases if alias.strip()]
+
+
+def faculty_field_terms(member: dict[str, Any]) -> list[str]:
+    raw_field = normalize_entities(str(member.get("field", ""))).lower().replace("비전", "비젼")
+    return [
+        term.replace("비전", "비젼")
+        for term in tokenize_korean_text(raw_field)
+        if len(term) >= 2 and term not in FACULTY_FIELD_STOPWORDS
+    ]
+
+
+def find_faculty_profile_for_state(state: ConversationState, question: str) -> dict[str, Any] | None:
+    lookup_targets = [state.department, question]
+    normalized_targets = [normalize_faculty_lookup_text(target) for target in lookup_targets if target]
+
+    for profile in FACULTY_PROFILES:
+        aliases = [normalize_faculty_lookup_text(alias) for alias in profile_aliases(profile)]
+        if any(alias and any(alias in target for target in normalized_targets) for alias in aliases):
+            return profile
+
+    normalized_question = normalize_faculty_lookup_text(question)
+    for profile in FACULTY_PROFILES:
+        for member in profile.get("faculty", []):
+            if not isinstance(member, dict):
+                continue
+            name = normalize_faculty_lookup_text(str(member.get("name", "")))
+            if name and name in normalized_question:
+                return profile
+
+    field_matched_profiles = []
+    for profile in FACULTY_PROFILES:
+        faculty = [member for member in profile.get("faculty", []) if isinstance(member, dict)]
+        if any(faculty_member_matches_question(member, question) for member in faculty):
+            field_matched_profiles.append(profile)
+
+    if len(field_matched_profiles) == 1:
+        return field_matched_profiles[0]
+
+    return None
+
+
+def faculty_member_matches_question(member: dict[str, Any], question: str) -> bool:
+    normalized_question = normalize_faculty_lookup_text(question)
+    name = normalize_faculty_lookup_text(str(member.get("name", "")))
+    if name and name in normalized_question:
+        return True
+
+    member_text = normalize_faculty_lookup_text(
+        " ".join(str(member.get(field, "")) for field in ["field", "office", "position"])
+    )
+    if "컴퓨터비젼" in normalized_question and "컴퓨터비젼" in member_text:
+        return True
+
+    field_terms = faculty_field_terms(member)
+    return any(term and term in normalize_entities(question).lower().replace("비전", "비젼") for term in field_terms)
+
+
+def build_structured_faculty_answer(
+    question: str,
+    history: list[ChatHistoryMessage],
+    state: ConversationState,
+    interpretation: dict[str, Any] | None = None,
+) -> StructuredAnswer | None:
+    profile = find_faculty_profile_for_state(state, conversation_text(question, history))
+    if not profile:
+        return None
+
+    faculty = [member for member in profile.get("faculty", []) if isinstance(member, dict)]
+    if not faculty:
+        return None
+
+    normalized_question = normalize_entities(question).lower()
+    asks_full_list = any(keyword in normalized_question for keyword in ["교수진", "전임교수"])
+    matched_faculty = [] if asks_full_list else [member for member in faculty if faculty_member_matches_question(member, question)]
+    visible_faculty = matched_faculty or faculty
+    asks_phone = any(keyword in normalized_question for keyword in ["전화", "전화번호", "연락처"])
+    asks_office = any(keyword in normalized_question for keyword in ["연구실", "방", "위치", "어디"])
+    compact = not matched_faculty and not asks_phone and not asks_office
+
+    department = str(profile.get("display_department") or profile.get("department") or "해당 학과")
+    if matched_faculty:
+        lines = [f"{department}에서 질문과 맞는 교수 정보입니다."]
+    else:
+        lines = [f"{department} 교수진 정보입니다."]
+
+    for member in visible_faculty:
+        details = [str(member.get("position", "")).strip()]
+        field = str(member.get("field", "")).strip()
+        office = str(member.get("office", "")).strip()
+        phone = str(member.get("phone", "")).strip()
+        if field:
+            details.append(f"전공분야 {field}")
+        if office and (asks_office or matched_faculty or not compact):
+            details.append(f"연구실 {office}")
+        if phone and (asks_phone or matched_faculty or not compact):
+            details.append(f"전화 {phone}")
+        lines.append(f"- {member.get('name')}: {', '.join(detail for detail in details if detail)}")
+
+    return StructuredAnswer(
+        answer="\n".join(lines),
+        sources=[str(profile.get("source_url") or profile.get("source") or "backend/data/faculty_profiles.json")],
+        answer_mode="faculty_profile",
+        suggestion_context=department,
+    )
+
+
+def build_computer_science_faculty_answer(
+    question: str,
+    history: list[ChatHistoryMessage],
+    interpretation: dict[str, Any] | None = None,
+) -> str | None:
+    combined_text = conversation_text(question, history)
+    if not question_mentions_faculty(question):
+        return None
+
+    reference = ACADEMIC_REFERENCES.get("computer_science_faculty", {})
+    faculty = reference.get("faculty", [])
+    if not isinstance(faculty, list) or not faculty:
+        return None
+
+    normalized_question = normalize_entities(question).lower().replace("비전", "비젼")
+    has_computer_science_context = question_mentions_computer_science(combined_text, interpretation)
+    matched_faculty = []
+    for member in faculty:
+        if not isinstance(member, dict):
+            continue
+        member_text = normalize_entities(
+            f"{member.get('name', '')} {member.get('position', '')} {member.get('office', '')} {member.get('field', '')}"
+        ).lower().replace("비전", "비젼")
+        if str(member.get("name", "")).strip() and normalize_entities(str(member.get("name", ""))).lower() in normalized_question:
+            matched_faculty.append(member)
+        elif str(member.get("field", "")).strip() and any(token in member_text for token in tokenize_korean_text(normalized_question)):
+            compact_question = re.sub(r"\s+", "", normalized_question)
+            compact_member_text = re.sub(r"\s+", "", member_text)
+            if "컴퓨터비젼" in compact_question:
+                if "컴퓨터비젼" in compact_member_text:
+                    matched_faculty.append(member)
+                continue
+            field_terms = [
+                term for term in tokenize_korean_text(str(member.get("field", ""))
+                ) if len(term) >= 2 and term not in {"컴퓨터", "ai", "hci"}
+            ]
+            field_terms = [term.replace("비전", "비젼") for term in field_terms]
+            if any(term in normalized_question for term in field_terms):
+                matched_faculty.append(member)
+
+    if not has_computer_science_context and not matched_faculty:
+        return None
+
+    visible_faculty = matched_faculty or faculty
+    asks_phone = any(keyword in normalized_question for keyword in ["전화", "전화번호", "연락처"])
+    asks_office = any(keyword in normalized_question for keyword in ["연구실", "방", "위치", "어디"])
+    asks_field = any(keyword in normalized_question for keyword in ["전공", "분야", "연구분야", "뭐", "무엇"])
+    compact = not matched_faculty and not (asks_phone or asks_office)
+
+    if matched_faculty:
+        lines = [f"{reference.get('department', '컴퓨터공학전공')}에서 질문과 맞는 교수 정보입니다."]
+    else:
+        lines = [f"{reference.get('department', '컴퓨터공학전공')} 전임교수는 다음과 같습니다."]
+
+    for member in visible_faculty:
+        if not isinstance(member, dict):
+            continue
+        details = [str(member.get("position", "")).strip()]
+        field = str(member.get("field", "")).strip()
+        if field and (compact or asks_field or matched_faculty):
+            details.append(f"전공분야 {field}")
+        if member.get("office") and (asks_office or matched_faculty or not compact):
+            details.append(f"연구실 {member.get('office')}")
+        if member.get("phone") and (asks_phone or matched_faculty or not compact):
+            details.append(f"전화 {member.get('phone')}")
+        details_text = ", ".join(detail for detail in details if detail)
+        lines.append(f"- {member.get('name')}: {details_text}")
+
+    return "\n".join(lines)
+
+
+def department_aliases_for_lookup(department: str) -> list[str]:
+    if not department:
+        return []
+    aliases = {normalize_entities(department)}
+    for canonical, canonical_aliases in FOCUS_TERM_RULES.items():
+        if department == canonical or department in canonical_aliases:
+            aliases.add(canonical)
+            aliases.update(canonical_aliases)
+    expanded = set()
+    for alias in aliases:
+        if not alias:
+            continue
+        expanded.add(alias)
+    return [alias for alias in expanded if alias]
+
+
+def extract_generic_faculty_entries(content: str) -> list[dict[str, str]]:
+    normalized = re.sub(r"\s+", " ", normalize_entities(content)).strip()
+    header_positions = [
+        pos for marker in ["전임교수", "교수진", "교수소개"]
+        if (pos := normalized.find(marker)) >= 0
+    ]
+    if header_positions:
+        normalized = normalized[min(header_positions):]
+
+    segments = re.split(
+        r"\s+상세보기\s+|(?=이름\s+[가-힣A-Za-z·\s]{2,20}?\s+사진)|(?=[가-힣A-Za-z·]{2,12}\s+교수이미지\s+[가-힣A-Za-z·]{2,12})",
+        normalized,
+    )
+    entries = []
+    seen_names = set()
+
+    for segment in segments:
+        segment = segment.strip()
+        if not segment:
+            continue
+
+        name = ""
+        name_match = re.search(r"이름\s+([가-힣A-Za-z·\s]{2,20}?)(?:\s+사진|\s+직위)", segment)
+        if name_match:
+            name = re.sub(r"\s+", " ", name_match.group(1)).strip()
+        else:
+            image_match = re.search(r"([가-힣A-Za-z·]{2,12})\s+교수이미지\s+\1", segment)
+            if image_match:
+                name = image_match.group(1).strip()
+
+        if not name or name in seen_names:
+            continue
+
+        position = ""
+        position_match = re.search(r"직위\s+(.+?)(?:\s+전화번호|\s+연구실|\s+교수실|\s+전공분야|\s+담당과목|\s+홈페이지|\s+이메일|$)", segment)
+        if position_match:
+            position = position_match.group(1).strip()
+        else:
+            position_match = re.search(rf"{re.escape(name)}\s+(.{{0,30}}?교수(?:,\s*학과장)?)", segment)
+            if position_match:
+                position = position_match.group(1).strip()
+
+        phone = ""
+        phone_match = re.search(r"전화번호\s+([0-9\-]+)", segment)
+        if phone_match:
+            phone = phone_match.group(1).strip()
+
+        office = ""
+        office_match = re.search(r"연구실\s+(.+?)(?:\s+교수실|\s+전공분야|\s+담당과목|\s+홈페이지|\s+이메일|$)", segment)
+        if office_match:
+            office = office_match.group(1).strip()
+        elif (office_match := re.search(r"교수실\s+(.+?)(?:\s+전공분야|\s+담당과목|\s+홈페이지|\s+이메일|$)", segment)):
+            office = office_match.group(1).strip()
+
+        field = ""
+        field_match = re.search(r"전공분야\s+(.+?)(?:\s+홈페이지|\s+이메일|\s+전화번호|\s+연구실|$)", segment)
+        if field_match:
+            field = field_match.group(1).strip()
+        elif (field_match := re.search(r"담당과목\s+(.+?)(?:\s+홈페이지|\s+이메일|\s+전화번호|\s+연구실|$)", segment)):
+            field = field_match.group(1).strip()
+        elif not position_match and "교수이미지" in segment:
+            field_match = re.search(rf"{re.escape(name)}\s+교수이미지\s+{re.escape(name)}\s+.+?교수(?:,\s*학과장)?\s+(.+?)(?:\s+[가-힣A-Za-z·]{{2,12}}\s+교수이미지|$)", segment)
+            if field_match:
+                field = field_match.group(1).strip()
+
+        entries.append(
+            {
+                "name": name,
+                "position": position,
+                "phone": phone,
+                "office": office,
+                "field": field,
+            }
+        )
+        seen_names.add(name)
+
+    return entries
+
+
+def find_department_faculty_hits(department: str) -> list[IndexedDocument]:
+    aliases = [alias.lower() for alias in department_aliases_for_lookup(department)]
+    if not aliases:
+        return []
+
+    scored_docs = []
+    for doc in all_indexed_docs:
+        title = str((doc.metadata or {}).get("title", ""))
+        normalized_text = normalize_entities(f"{doc.source}\n{title}\n{doc.content}").lower()
+        if not any(alias and alias in normalized_text for alias in aliases):
+            continue
+        if not any(marker in normalized_text for marker in ["전임교수", "교수진", "교수소개", "직위 교수", "교수이미지"]):
+            continue
+        score = 0
+        if "전임교수" in normalized_text:
+            score += 20
+        if "교수진" in normalized_text:
+            score += 15
+        if "교수소개" in normalized_text:
+            score += 12
+        if any(alias and alias in normalize_entities(doc.source.lower()) for alias in aliases):
+            score += 10
+        score += normalized_text.count("전화번호")
+        score += normalized_text.count("직위")
+        scored_docs.append((score, doc))
+
+    scored_docs.sort(key=lambda item: item[0], reverse=True)
+    return [doc for _, doc in scored_docs[:3]]
+
+
+def build_generic_faculty_answer(
+    question: str,
+    history: list[ChatHistoryMessage],
+    state: ConversationState,
+    interpretation: dict[str, Any] | None = None,
+) -> StructuredAnswer | None:
+    department = state.department or str((interpretation or {}).get("department", "") or "").strip()
+    if not department:
+        return None
+
+    hits = find_department_faculty_hits(department)
+    entries = []
+    source_names = []
+    seen_names = set()
+
+    for doc in hits:
+        if doc.source and doc.source not in source_names:
+            source_names.append(doc.source)
+        for entry in extract_generic_faculty_entries(doc.content):
+            name = entry.get("name", "")
+            if not name or name in seen_names:
+                continue
+            entries.append(entry)
+            seen_names.add(name)
+
+    if not entries:
+        return None
+
+    normalized_question = normalize_entities(question).lower().replace("비전", "비젼")
+    matched_entries = []
+    for entry in entries:
+        entry_text = normalize_entities(" ".join(str(value) for value in entry.values())).lower().replace("비전", "비젼")
+        compact_entry_text = re.sub(r"\s+", "", entry_text)
+        compact_question = re.sub(r"\s+", "", normalized_question)
+        if normalize_entities(entry.get("name", "")).lower() in normalized_question:
+            matched_entries.append(entry)
+            continue
+        if "컴퓨터비젼" in compact_question and "컴퓨터비젼" in compact_entry_text:
+            matched_entries.append(entry)
+            continue
+        field_terms = [
+            term.replace("비전", "비젼")
+            for term in tokenize_korean_text(entry_text)
+            if len(term) >= 2 and term not in {"교수", "부교수", "조교수", "전화번호", "연구실", "컴퓨터", "ai"}
+        ]
+        if any(term in normalized_question for term in field_terms):
+            matched_entries.append(entry)
+
+    visible_entries = matched_entries or entries[:12]
+    asks_phone = any(keyword in normalized_question for keyword in ["전화", "전화번호", "연락처"])
+    asks_office = any(keyword in normalized_question for keyword in ["연구실", "방", "위치", "어디"])
+    show_details = bool(matched_entries) or asks_phone or asks_office
+
+    lines = [f"{department} 교수진 정보입니다."]
+    for entry in visible_entries:
+        details = [entry.get("position", "")]
+        if entry.get("field"):
+            details.append(f"분야/담당 {entry['field']}")
+        if entry.get("office") and show_details:
+            details.append(f"연구실 {entry['office']}")
+        if entry.get("phone") and show_details:
+            details.append(f"전화 {entry['phone']}")
+        lines.append(f"- {entry['name']}: {', '.join(detail for detail in details if detail)}")
+
+    if not matched_entries and len(entries) > len(visible_entries):
+        lines.append(f"총 {len(entries)}명 중 일부만 표시했습니다. 교수명이나 연구분야를 말하면 더 좁혀서 답할게요.")
+
+    return StructuredAnswer(
+        answer="\n".join(lines),
+        sources=source_names or ["origin faculty documents"],
+        answer_mode="faculty_generic",
+    )
+
+
+def format_date_range(start_date: str, end_date: str) -> str:
+    if start_date == end_date:
+        return start_date.replace("-", "년 ", 1).replace("-", "월 ") + "일"
+    start_year, start_month, start_day = start_date.split("-")
+    end_year, end_month, end_day = end_date.split("-")
+    if start_year == end_year:
+        if start_month == end_month:
+            return f"{start_year}년 {int(start_month)}월 {int(start_day)}일부터 {int(end_day)}일까지"
+        return f"{start_year}년 {int(start_month)}월 {int(start_day)}일부터 {int(end_month)}월 {int(end_day)}일까지"
+    return f"{start_year}년 {int(start_month)}월 {int(start_day)}일부터 {end_year}년 {int(end_month)}월 {int(end_day)}일까지"
+
+
+def build_academic_calendar_answer(
+    question: str,
+    history: list[ChatHistoryMessage],
+    interpretation: dict[str, Any] | None = None,
+) -> str | None:
+    combined_text = conversation_text(question, history)
+    normalized_question = normalize_entities(question).lower()
+    normalized_combined = normalize_entities(combined_text).lower()
+    reference = ACADEMIC_REFERENCES.get("academic_calendar_2026", {})
+    events = reference.get("events", [])
+    if not isinstance(events, list) or not events:
+        return None
+
+    requested_term = ""
+    if "2학기" in normalized_combined:
+        requested_term = "2학기"
+    elif "1학기" in normalized_combined:
+        requested_term = "1학기"
+
+    matched_events = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        aliases = [str(alias).lower() for alias in event.get("aliases", [])]
+        name = str(event.get("name", "")).lower()
+        if not any(alias and alias in normalized_question for alias in aliases) and name not in normalized_question:
+            continue
+        if requested_term and event.get("term") != requested_term:
+            continue
+        matched_events.append(event)
+
+    if not matched_events:
+        return None
+
+    if not requested_term and len(matched_events) > 1:
+        if any(term in normalized_question for term in ["기말", "중간", "성적"]):
+            matched_events = [event for event in matched_events if event.get("term") == "1학기"] or matched_events
+
+    lines = []
+    for event in matched_events[:3]:
+        date_text = format_date_range(str(event.get("start_date", "")), str(event.get("end_date", "")))
+        lines.append(f"{event.get('term', '')} {event.get('name', '학사일정')} 일정은 {date_text}입니다.")
+
+    lines.append("학사일정은 학교 사정에 따라 변경될 수 있습니다.")
+    return "\n".join(lines)
+
+
+def question_mentions_general_education_curriculum(question: str) -> bool:
+    normalized_question = normalize_entities(question).lower()
+    general_terms = ["교양교육과정", "교양과정", "함께형", "균형교양", "융합교양", "기초교양", "선택교양", "다른 교양", "상한"]
+    return any(term in normalized_question for term in general_terms) and not any(
+        excluded in normalized_question
+        for excluded in ["졸업 가능", "부족", "남았", "계산"]
+    )
+
+
+def build_general_education_answer(
+    question: str,
+    history: list[ChatHistoryMessage],
+    interpretation: dict[str, Any] | None = None,
+) -> str | None:
+    combined_text = conversation_text(question, history)
+    normalized_combined = normalize_entities(combined_text)
+    requested_year = extract_cohort_year(normalized_combined)
+    if requested_year not in {2023, None}:
+        return None
+    if not question_mentions_general_education_curriculum(combined_text):
+        return None
+
+    reference = ACADEMIC_REFERENCES.get("general_education_2023", {})
+    items = reference.get("items", [])
+    if not isinstance(items, list) or not items:
+        return None
+
+    normalized_question = normalize_entities(question).lower()
+    exclude_together = any(term in normalized_question for term in ["함께형 이외", "함께형교양 이외", "함께형 말고", "다른 교양"])
+    asks_only_credit_cap = "상한" in normalized_question
+
+    if asks_only_credit_cap and question_mentions_computer_science(combined_text, interpretation):
+        policy = find_graduation_policy_for_text(combined_text)
+        if policy and policy.get("general_education_credits") is not None:
+            return (
+                f"{policy.get('department', '컴퓨터공학과')} {policy.get('admission_cohort', '해당 입학연도')} 기준 "
+                f"교양학점은 {policy.get('general_education_credits')}학점입니다. "
+                "교양교육과정은 학과별 교과목 영역 및 교양이수 상한학점을 함께 확인해야 합니다."
+            )
+
+    visible_items = [
+        item for item in items
+        if isinstance(item, dict) and not (exclude_together and str(item.get("name", "")).startswith("함께형"))
+    ]
+    if not visible_items:
+        return None
+
+    cohort = reference.get("admission_cohort", "2023학년도 이후 입학생")
+    minimum = reference.get("minimum_credits", 30)
+    lines = [f"{cohort} 교양교육과정은 최소 {minimum}학점 이상 이수 기준입니다."]
+    for item in visible_items:
+        lines.append(f"- {item.get('name')}: {item.get('requirement')}")
+    lines.append("학과별 편성표와 교양이수 상한학점은 별도로 따라야 합니다.")
+    return "\n".join(lines)
+
+
+def question_mentions_only_general_education_credits(question: str) -> bool:
+    normalized_question = normalize_entities(question).lower()
+    if "교양" not in normalized_question:
+        return False
+    if any(term in normalized_question for term in ["전공", "주전공", "복수", "전체", "총", "졸업요건", "졸업학점"]):
+        return False
+    return any(term in normalized_question for term in ["이수학점", "학점", "졸업"])
+
+
 def build_graduation_policy_answer(question: str, history: list[ChatHistoryMessage], interpretation: dict[str, Any] | None = None) -> str | None:
     intent = str((interpretation or {}).get("intent", ""))
     normalized_question = normalize_entities(question)
@@ -770,6 +1369,15 @@ def build_graduation_policy_answer(question: str, history: list[ChatHistoryMessa
 
     department = policy.get("department", "해당 학과")
     cohort = policy.get("admission_cohort", "최신 기준")
+    if question_mentions_only_general_education_credits(question):
+        general_credits = policy.get("general_education_credits")
+        if general_credits is None:
+            return None
+        return (
+            f"{department} {cohort} 기준 교양학점은 {general_credits}학점입니다. "
+            "세부 교양 영역은 입학연도별 교양교육과정과 학과별 편성표를 같이 확인해야 합니다."
+        )
+
     lines = [
         f"{department} {cohort} 졸업요건 중 학점 기준은 다음과 같습니다.",
         f"- 총 이수학점: {policy.get('minimum_total_credits')}학점",
@@ -834,6 +1442,63 @@ def conversation_text(question: str, history: list[ChatHistoryMessage], max_mess
     return f"{history_text}\n{question}"
 
 
+def infer_department_from_text(text: str) -> str:
+    normalized_text = normalize_entities(text).lower()
+    for canonical, aliases in FOCUS_TERM_RULES.items():
+        if any(alias.lower() in normalized_text for alias in aliases):
+            return canonical
+    department_match = re.search(r"([가-힣A-Za-z·]+(?:학과|전공|학부))", normalize_entities(text))
+    if department_match:
+        return department_match.group(1)
+    return ""
+
+
+def infer_domain_intent(question: str, history: list[ChatHistoryMessage], interpretation: dict[str, Any] | None = None) -> str:
+    current = normalize_entities(question).lower()
+    combined = normalize_entities(conversation_text(question, history)).lower()
+    interpreted_intent = str((interpretation or {}).get("intent", ""))
+    interpreted_topic = str((interpretation or {}).get("topic", ""))
+
+    if any(keyword in current for keyword in ["교수", "교수진", "전임교수"]):
+        return "faculty"
+    if any(keyword in current for keyword in ["학사일정", "기말", "중간고사", "시험", "개강", "종강"]):
+        return "academic_calendar"
+    if any(keyword in current for keyword in ["교양교육과정", "교양과정", "함께형", "기초교양", "균형교양", "융합교양", "선택교양", "다른 교양"]):
+        return "general_education"
+    if "교양" in current and "상한" in current:
+        return "general_education"
+    if interpreted_intent in {"graduation_policy_question", "graduation_credit_check"} or interpreted_topic == "graduation_credits":
+        return "graduation"
+    if any(keyword in current for keyword in ["졸업요건", "졸업학점", "졸업 이수", "이수학점"]):
+        return "graduation"
+    if any(keyword in current for keyword in ["단과대학", "소속", "어느 대학", "무슨 대학"]):
+        return "department_affiliation"
+    if "교양교육과정" in combined and any(keyword in current for keyword in ["말고", "이외", "다른", "더"]):
+        return "general_education"
+    return "rag"
+
+
+def build_conversation_state(
+    question: str,
+    history: list[ChatHistoryMessage],
+    interpretation: dict[str, Any] | None = None,
+) -> ConversationState:
+    standalone_question = str((interpretation or {}).get("standalone_question", "") or "").strip() or build_contextual_search_query(question, history)
+    combined_text = conversation_text(question, history)
+    interpreted_department = str((interpretation or {}).get("department", "") or "").strip()
+    department = interpreted_department or infer_department_from_text(combined_text)
+    cohort_year = extract_cohort_year(combined_text)
+    domain_intent = infer_domain_intent(question, history, interpretation)
+    topic = str((interpretation or {}).get("topic", "") or "")
+    return ConversationState(
+        standalone_question=standalone_question,
+        department=department,
+        cohort_year=cohort_year,
+        domain_intent=domain_intent,
+        topic=topic,
+    )
+
+
 def question_asks_credit_followup(question: str) -> bool:
     normalized_question = normalize_entities(question).lower()
     return any(keyword in normalized_question for keyword in CREDIT_FOLLOWUP_KEYWORDS)
@@ -871,7 +1536,7 @@ def credit_progress_from_interpretation(interpretation: dict[str, Any] | None) -
             parsed_credits = int(credits)
         except (TypeError, ValueError):
             continue
-        if area:
+        if area and parsed_credits > 0:
             progress[area] = parsed_credits
     return progress
 
@@ -1332,6 +1997,17 @@ def format_chat_history(history: list[ChatHistoryMessage], max_messages: int = 8
     return formatted
 
 
+def history_with_memory(session_id: str | None) -> list[ChatHistoryMessage]:
+    if not CHAT_MEMORY_ENABLED:
+        return []
+
+    memory_context = conversation_memory.build_context(session_id)
+    if not memory_context:
+        return []
+
+    return [ChatHistoryMessage(role="user", content=memory_context)]
+
+
 def build_contextual_search_query(question: str, history: list[ChatHistoryMessage]) -> str:
     history_text = format_chat_history(history, max_messages=6, max_chars=900)
     if not history_text:
@@ -1392,6 +2068,232 @@ def build_search_query_from_interpretation(question: str, history: list[ChatHist
     if standalone_question:
         return standalone_question
     return build_contextual_search_query(question, history)
+
+
+def faculty_question_has_specific_target(question: str) -> bool:
+    reference = ACADEMIC_REFERENCES.get("computer_science_faculty", {})
+    faculty = reference.get("faculty", [])
+    if not isinstance(faculty, list):
+        return False
+
+    normalized_question = normalize_entities(question).lower().replace("비전", "비젼")
+    compact_question = re.sub(r"\s+", "", normalized_question)
+    for member in faculty:
+        if not isinstance(member, dict):
+            continue
+        name = normalize_entities(str(member.get("name", ""))).lower()
+        if name and name in normalized_question:
+            return True
+        field = normalize_entities(str(member.get("field", ""))).lower().replace("비전", "비젼")
+        compact_field = re.sub(r"\s+", "", field)
+        if compact_field and compact_field in compact_question:
+            return True
+        field_terms = [
+            term.replace("비전", "비젼")
+            for term in tokenize_korean_text(field)
+            if len(term) >= 2 and term not in {"컴퓨터", "ai", "hci"}
+        ]
+        if any(term in normalized_question for term in field_terms):
+            return True
+    return False
+
+
+def academic_calendar_question_has_event(question: str) -> bool:
+    normalized_question = normalize_entities(question).lower()
+    reference = ACADEMIC_REFERENCES.get("academic_calendar_2026", {})
+    events = reference.get("events", [])
+    if not isinstance(events, list):
+        return False
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        aliases = [str(alias).lower() for alias in event.get("aliases", [])]
+        name = str(event.get("name", "")).lower()
+        if any(alias and alias in normalized_question for alias in aliases) or name in normalized_question:
+            return True
+    return False
+
+
+def build_clarifying_domain_answer(
+    question: str,
+    history: list[ChatHistoryMessage],
+    state: ConversationState,
+    interpretation: dict[str, Any] | None = None,
+) -> StructuredAnswer | None:
+    combined_text = conversation_text(question, history)
+    if state.domain_intent == "faculty":
+        has_structured_profile = find_faculty_profile_for_state(state, combined_text) is not None
+        if not has_structured_profile and not state.department and not question_mentions_computer_science(combined_text, interpretation) and not faculty_question_has_specific_target(question):
+            return StructuredAnswer(
+                answer="어느 학과 교수진인지 알려주세요. 예를 들어 `컴퓨터공학과 교수진` 또는 `김판구 교수 연구실`처럼 물어보면 바로 찾을 수 있습니다.",
+                sources=[],
+                answer_mode="clarifying_question",
+            )
+
+    if state.domain_intent == "graduation" and not state.department:
+        return StructuredAnswer(
+            answer="졸업요건이나 이수학점은 학과/전공별로 달라서 학과 정보가 필요합니다. 예를 들어 `2023학번 컴퓨터공학과 졸업요건`처럼 알려주세요.",
+            sources=[],
+            answer_mode="clarifying_question",
+        )
+
+    if state.domain_intent == "general_education" and state.cohort_year is None:
+        return StructuredAnswer(
+            answer="교양교육과정은 입학연도별로 달라서 학번이나 입학연도가 필요합니다. 예를 들어 `23학번 교양교육과정`처럼 알려주세요.",
+            sources=[],
+            answer_mode="clarifying_question",
+        )
+
+    if state.domain_intent == "academic_calendar" and not academic_calendar_question_has_event(question):
+        return StructuredAnswer(
+            answer="어떤 학사일정이 궁금한지 알려주세요. 예를 들어 `기말고사 언제야`, `2학기 수강신청 언제야`, `성적열람 언제야`처럼 물어볼 수 있습니다.",
+            sources=[],
+            answer_mode="clarifying_question",
+        )
+
+    return None
+
+
+def interpretation_with_state(interpretation: dict[str, Any] | None, state: ConversationState) -> dict[str, Any]:
+    enriched = dict(interpretation or {})
+    if state.department and not str(enriched.get("department", "") or "").strip():
+        enriched["department"] = state.department
+    if state.standalone_question and not str(enriched.get("standalone_question", "") or "").strip():
+        enriched["standalone_question"] = state.standalone_question
+    return enriched
+
+
+def build_structured_domain_answer(
+    question: str,
+    history: list[ChatHistoryMessage],
+    state: ConversationState,
+    interpretation: dict[str, Any] | None = None,
+) -> StructuredAnswer | None:
+    enriched_interpretation = interpretation_with_state(interpretation, state)
+
+    credit_progress_answer = build_graduation_credit_progress_answer(question, history, enriched_interpretation)
+    if credit_progress_answer:
+        return StructuredAnswer(
+            answer=credit_progress_answer,
+            sources=["backend/data/academic_policies.json"],
+            answer_mode="graduation_credit_progress",
+        )
+
+    clarifying_answer = build_clarifying_domain_answer(question, history, state, enriched_interpretation)
+    if clarifying_answer:
+        return clarifying_answer
+
+    if state.domain_intent == "department_affiliation":
+        department_affiliation_answer = build_department_affiliation_answer(question, history, enriched_interpretation)
+        if department_affiliation_answer:
+            return StructuredAnswer(
+                answer=department_affiliation_answer,
+                sources=["backend/data/academic_policies.json"],
+                answer_mode="department_affiliation",
+            )
+
+    department_summary_answer = build_department_summary_answer(question, history, enriched_interpretation)
+    if department_summary_answer:
+        return StructuredAnswer(
+            answer=department_summary_answer,
+            sources=["backend/data/academic_policies.json"],
+            answer_mode="department_summary",
+        )
+
+    if state.domain_intent == "faculty":
+        structured_faculty_answer = build_structured_faculty_answer(question, history, state, enriched_interpretation)
+        if structured_faculty_answer:
+            return structured_faculty_answer
+        generic_faculty_answer = build_generic_faculty_answer(question, history, state, enriched_interpretation)
+        if generic_faculty_answer:
+            return generic_faculty_answer
+
+    if state.domain_intent == "academic_calendar":
+        calendar_answer = build_academic_calendar_answer(question, history, enriched_interpretation)
+        if calendar_answer:
+            return StructuredAnswer(
+                answer=calendar_answer,
+                sources=["backend/data/academic_reference_answers.json"],
+                answer_mode="academic_calendar_2026",
+            )
+
+    if state.domain_intent == "general_education":
+        general_education_answer = build_general_education_answer(question, history, enriched_interpretation)
+        if general_education_answer:
+            return StructuredAnswer(
+                answer=general_education_answer,
+                sources=["backend/data/academic_reference_answers.json"],
+                answer_mode="general_education_2023",
+            )
+
+    if state.domain_intent == "graduation":
+        graduation_policy_answer = build_graduation_policy_answer(question, history, enriched_interpretation)
+        if graduation_policy_answer:
+            return StructuredAnswer(
+                answer=graduation_policy_answer,
+                sources=["backend/data/academic_policies.json"],
+                answer_mode="graduation_policy",
+            )
+
+    return None
+
+
+def basis_line_for_answer(answer_mode: str, sources: list[str]) -> str:
+    if answer_mode == "clarifying_question":
+        return ""
+    if answer_mode in {"computer_science_faculty", "faculty_profile"}:
+        return "기준: 조선대학교 학과 홈페이지 교수소개 구조화 데이터"
+    if answer_mode == "faculty_generic":
+        return "기준: 조선대학교 학과 홈페이지 교수소개 문서"
+    if answer_mode == "academic_calendar_2026":
+        return "기준: 조선대학교 2026년 학사일정"
+    if answer_mode == "general_education_2023":
+        return "기준: 2026학년도 1학기 수강가이드 교양과정 이수 안내"
+    if answer_mode in {"graduation_policy", "graduation_credit_progress", "department_affiliation", "department_summary"}:
+        return "기준: 조선대학교 학사안내 졸업이수최소학점표"
+    if answer_mode == "rag" and sources:
+        visible_sources = []
+        for source in sources:
+            if source and source not in visible_sources:
+                visible_sources.append(str(source))
+            if len(visible_sources) >= 2:
+                break
+        if visible_sources:
+            return f"참고: {', '.join(visible_sources)}"
+    return ""
+
+
+def append_basis_line(answer: str, answer_mode: str, sources: list[str]) -> str:
+    basis_line = basis_line_for_answer(answer_mode, sources)
+    if not basis_line or basis_line in answer:
+        return answer
+    return f"{answer}\n\n{basis_line}"
+
+
+def suggestions_for_answer(answer_mode: str, state: ConversationState, suggestion_context: str = "") -> list[str]:
+    if answer_mode in {"computer_science_faculty", "faculty_profile"}:
+        department = suggestion_context or state.department or "컴퓨터공학과"
+        return [f"{department} 교수 연락처", f"{department} 교수 연구실", "교수명으로 더 찾아줘"]
+    if answer_mode == "faculty_generic":
+        department = state.department or "해당 학과"
+        return [f"{department} 교수 연락처", f"{department} 교수 연구실", "교수명으로 더 찾아줘"]
+    if answer_mode == "academic_calendar_2026":
+        return ["2학기 중간고사 언제야", "성적열람 언제야", "수강신청 언제야"]
+    if answer_mode == "general_education_2023":
+        return ["교양 이수학점은?", "함께형 말고 다른 교양은?", "컴퓨터공학과 교양 이수학점"]
+    if answer_mode in {"graduation_policy", "graduation_credit_progress"}:
+        department = state.department or "컴퓨터공학과"
+        cohort = f"{str(state.cohort_year)[2:]}학번 " if state.cohort_year else ""
+        return [
+            f"{cohort}{department} 교양교육과정 알려줘",
+            "교양 이수학점은?",
+            "전공학점은?",
+        ]
+    if answer_mode == "clarifying_question":
+        return ["2023학번 컴퓨터공학과 졸업요건", "23학번 교양교육과정", "컴퓨터공학과 교수진"]
+    if answer_mode == "rag":
+        return ["관련 공지 더 찾아줘", "출처 알려줘", "신청기간 알려줘"]
+    return []
 
 
 async def get_gpt_response(
@@ -1459,6 +2361,44 @@ def root():
         "message": "RAG 서버 실행 중"
     }
 
+
+@app.get("/health/rag", status_code=status.HTTP_200_OK)
+def rag_health():
+    errors = []
+
+    def collection_count(vectorstore: Chroma, label: str) -> int | None:
+        try:
+            return int(vectorstore._collection.count())
+        except Exception as exc:
+            errors.append(f"{label}: {exc}")
+            return None
+
+    origin_count = collection_count(vectorstore_origin, "origin")
+    update_count = collection_count(vectorstore_update, "update")
+    indexed_counts = dict(indexed_doc_counts_by_store)
+    healthy = origin_count is not None and update_count is not None
+
+    return {
+        "success": healthy,
+        "status": "ok" if healthy else "degraded",
+        "collections": {
+            "origin": {
+                "name": ORIGIN_COLLECTION_NAME,
+                "directory": PERSIST_DIRECTORY,
+                "collection_count": origin_count,
+                "indexed_count": indexed_counts.get("origin", 0),
+            },
+            "update": {
+                "name": UPDATE_COLLECTION_NAME,
+                "directory": UPDATE_DB_DIRECTORY,
+                "collection_count": update_count,
+                "indexed_count": indexed_counts.get("update", 0),
+            },
+        },
+        "total_indexed_documents": len(all_indexed_docs),
+        "errors": errors,
+    }
+
 # 🔥 챗봇 API (GPT 연결됨)
 @app.post(
     "/chat",
@@ -1466,57 +2406,36 @@ def root():
     status_code=status.HTTP_200_OK
 )
 async def chat(req: ChatRequest):
-    history = req.history
+    history = history_with_memory(req.session_id)
     interpretation = await interpret_chat_request(req.question, history)
-    credit_progress_answer = build_graduation_credit_progress_answer(req.question, history, interpretation)
-    if credit_progress_answer:
+    state = build_conversation_state(req.question, history, interpretation)
+    structured_answer = build_structured_domain_answer(req.question, history, state, interpretation)
+    if structured_answer:
+        if CHAT_MEMORY_ENABLED:
+            conversation_memory.update(req.session_id, req.question, interpretation, state)
+        answer = append_basis_line(
+            structured_answer.answer,
+            structured_answer.answer_mode,
+            structured_answer.sources,
+        )
         return {
             "success": True,
-            "answer": credit_progress_answer,
-            "sources": ["backend/data/academic_policies.json"],
+            "answer": answer,
+            "sources": structured_answer.sources,
+            "suggestions": suggestions_for_answer(
+                structured_answer.answer_mode,
+                state,
+                structured_answer.suggestion_context,
+            ),
             "debug": {
-                "answer_mode": "graduation_credit_progress",
+                "answer_mode": structured_answer.answer_mode,
+                "conversation_state": state.__dict__,
                 "interpretation": interpretation,
+                "memory": conversation_memory.debug_snapshot(req.session_id) if CHAT_MEMORY_ENABLED else {},
             } if req.debug else None,
         }
 
-    department_affiliation_answer = build_department_affiliation_answer(req.question, history, interpretation)
-    if department_affiliation_answer:
-        return {
-            "success": True,
-            "answer": department_affiliation_answer,
-            "sources": ["backend/data/academic_policies.json"],
-            "debug": {
-                "answer_mode": "department_affiliation",
-                "interpretation": interpretation,
-            } if req.debug else None,
-        }
-
-    department_summary_answer = build_department_summary_answer(req.question, history, interpretation)
-    if department_summary_answer:
-        return {
-            "success": True,
-            "answer": department_summary_answer,
-            "sources": ["backend/data/academic_policies.json"],
-            "debug": {
-                "answer_mode": "department_summary",
-                "interpretation": interpretation,
-            } if req.debug else None,
-        }
-
-    graduation_policy_answer = build_graduation_policy_answer(req.question, history, interpretation)
-    if graduation_policy_answer:
-        return {
-            "success": True,
-            "answer": graduation_policy_answer,
-            "sources": ["backend/data/academic_policies.json"],
-            "debug": {
-                "answer_mode": "graduation_policy",
-                "interpretation": interpretation,
-            } if req.debug else None,
-        }
-
-    search_query = build_search_query_from_interpretation(req.question, history, interpretation)
+    search_query = state.standalone_question or build_search_query_from_interpretation(req.question, history, interpretation)
     search_result = search_docs(search_query)
     context = "\n".join(hit.content for hit in search_result.hits)
 
@@ -1528,11 +2447,22 @@ async def chat(req: ChatRequest):
             detail="GPT 응답 생성 실패"
         )
 
+    if CHAT_MEMORY_ENABLED:
+        conversation_memory.update(req.session_id, req.question, interpretation, state)
+
     return {
         "success": True,
-        "answer": answer,
+        "answer": append_basis_line(answer, "rag", [hit.source for hit in search_result.hits]),
         "sources": [hit.source for hit in search_result.hits],
-        "debug": (search_result.debug | {"interpretation": interpretation}) if req.debug else None,
+        "suggestions": suggestions_for_answer("rag", state),
+        "debug": (
+            search_result.debug | {
+                "answer_mode": "rag",
+                "conversation_state": state.__dict__,
+                "interpretation": interpretation,
+                "memory": conversation_memory.debug_snapshot(req.session_id) if CHAT_MEMORY_ENABLED else {},
+            }
+        ) if req.debug else None,
     }
 
 # =====================================

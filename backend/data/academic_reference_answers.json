@@ -1,0 +1,212 @@
+{
+  "computer_science_faculty": {
+    "source": "조선대학교 AI·SW학부(컴퓨터공학전공) 전임교수",
+    "source_url": "https://eie.chosun.ac.kr/ce/5662/subview.do",
+    "department": "AI·SW학부(컴퓨터공학전공)",
+    "faculty": [
+      {
+        "name": "김판구",
+        "position": "교수",
+        "phone": "7636",
+        "office": "IT-7111",
+        "field": "정보검색, 자연어처리"
+      },
+      {
+        "name": "모상만",
+        "position": "교수",
+        "phone": "6032",
+        "office": "IT-7105",
+        "field": "모바일 컴퓨팅"
+      },
+      {
+        "name": "신석주",
+        "position": "교수",
+        "phone": "6030",
+        "office": "IT-7119",
+        "field": "이동통신, WSN, CPS, Network Security"
+      },
+      {
+        "name": "정현숙",
+        "position": "교수",
+        "phone": "7307",
+        "office": "IT-7120",
+        "field": ""
+      },
+      {
+        "name": "강문수",
+        "position": "교수",
+        "phone": "7475",
+        "office": "IT-7125",
+        "field": ""
+      },
+      {
+        "name": "양희덕",
+        "position": "교수",
+        "phone": "7474",
+        "office": "IT-10106",
+        "field": ""
+      },
+      {
+        "name": "심재홍",
+        "position": "부교수",
+        "phone": "6039",
+        "office": "IT-7106",
+        "field": "임베디드소스트웨어, 실시간시스템"
+      },
+      {
+        "name": "정호엽",
+        "position": "부교수",
+        "phone": "7100",
+        "office": "IT-10128(컴퓨터 비젼 연구실)",
+        "field": "컴퓨터비젼"
+      },
+      {
+        "name": "김성기",
+        "position": "부교수",
+        "phone": "7094",
+        "office": "IT-10119",
+        "field": "혼합현실, 그래픽스, GPU, 모바일 장치"
+      },
+      {
+        "name": "전찬준",
+        "position": "조교수",
+        "phone": "7736",
+        "office": "IT-10120(멀티미디어컴퓨팅 연구실)",
+        "field": "음성 신호처리"
+      },
+      {
+        "name": "안드레스 카세레스",
+        "position": "조교수",
+        "phone": "062-230-7473",
+        "office": "IT-7112",
+        "field": "Sensors localization and tracking, Smart Healthcare"
+      },
+      {
+        "name": "임철기",
+        "position": "조교수",
+        "phone": "7697",
+        "office": "IT-10112",
+        "field": "뇌공학-AI"
+      },
+      {
+        "name": "김 원",
+        "position": "조교수",
+        "phone": "6033",
+        "office": "IT-10125",
+        "field": "인간-컴퓨터 상호작용(HCI), HCI+AI"
+      }
+    ]
+  },
+  "academic_calendar_2026": {
+    "source": "조선대학교 2026년 학사일정",
+    "source_file": "조선대학교 2026년 학사일정.txt",
+    "academic_year": 2026,
+    "events": [
+      {
+        "key": "spring_midterm",
+        "aliases": ["1학기 중간고사", "중간고사"],
+        "term": "1학기",
+        "name": "중간고사",
+        "start_date": "2026-04-20",
+        "end_date": "2026-04-24"
+      },
+      {
+        "key": "spring_final",
+        "aliases": ["1학기 기말고사", "기말고사"],
+        "term": "1학기",
+        "name": "기말고사",
+        "start_date": "2026-06-15",
+        "end_date": "2026-06-24"
+      },
+      {
+        "key": "spring_grade_view",
+        "aliases": ["1학기 성적열람", "성적 열람", "성적열람"],
+        "term": "1학기",
+        "name": "성적 열람",
+        "start_date": "2026-06-29",
+        "end_date": "2026-07-05"
+      },
+      {
+        "key": "fall_course_registration",
+        "aliases": ["2학기 수강신청", "수강신청"],
+        "term": "2학기",
+        "name": "수강신청",
+        "start_date": "2026-08-18",
+        "end_date": "2026-08-23"
+      },
+      {
+        "key": "fall_start",
+        "aliases": ["2학기 개강", "개강"],
+        "term": "2학기",
+        "name": "개강",
+        "start_date": "2026-09-01",
+        "end_date": "2026-09-01"
+      },
+      {
+        "key": "fall_midterm",
+        "aliases": ["2학기 중간고사", "중간고사"],
+        "term": "2학기",
+        "name": "중간고사",
+        "start_date": "2026-10-19",
+        "end_date": "2026-10-23"
+      },
+      {
+        "key": "fall_final",
+        "aliases": ["2학기 기말고사", "기말고사"],
+        "term": "2학기",
+        "name": "기말고사",
+        "start_date": "2026-12-15",
+        "end_date": "2026-12-21"
+      },
+      {
+        "key": "fall_grade_view",
+        "aliases": ["2학기 성적열람", "성적 열람", "성적열람"],
+        "term": "2학기",
+        "name": "성적 열람",
+        "start_date": "2026-12-29",
+        "end_date": "2026-12-31"
+      }
+    ]
+  },
+  "general_education_2023": {
+    "source": "2026학년도 1학기 수강가이드 교양과정 이수 안내",
+    "source_file": "2026_1학기_수강가이드_추출.txt",
+    "academic_year": 2023,
+    "admission_cohort": "2023학년도 이후 입학생",
+    "minimum_credits": 30,
+    "items": [
+      {
+        "name": "함께형교양",
+        "requirement": "필수 3학점. 신입생세미나(41874) 1학점을 이수하고, 남은 2학점은 함께형교양 영역 교과목에서 자유롭게 선택"
+      },
+      {
+        "name": "기초교양-의사소통",
+        "requirement": "열린사고와표현, 매체와의사소통, 말하기와실용글쓰기 중 학과별 편성 1과목 3학점 필수"
+      },
+      {
+        "name": "기초교양-영어",
+        "requirement": "영어 기초학력진단 결과에 따라 EGC 2학점과 EAL 2학점 과목을 이수"
+      },
+      {
+        "name": "기초교양-정보(SW·AI)",
+        "requirement": "계열별 입학 전 교육 1학점(P/N)과 정규 학기 SW·AI 교과목 3학점 필수"
+      },
+      {
+        "name": "기초교양-기초자연과학",
+        "requirement": "공학·자연계열은 학과별 교양필수 편성 교과목 3학점 이상 이수. 공학교육인증 학과는 MSC 24학점 이상"
+      },
+      {
+        "name": "균형교양",
+        "requirement": "공학·자연계열은 개성교육, 생산교육 영역에서 6학점 이상 선택 이수"
+      },
+      {
+        "name": "융합교양",
+        "requirement": "창의·융합 및 창작·응용 세부영역 구분 없이 3학점 이상 선택 이수"
+      },
+      {
+        "name": "더블리스팅/선택교양",
+        "requirement": "필수 이수학점 없음. 영역별 필수 이수학점을 채운 뒤 잔여 교양학점을 선택교양 등으로 이수 가능"
+      }
+    ]
+  }
+}
