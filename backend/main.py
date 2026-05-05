@@ -182,6 +182,7 @@ class ChatRequest(BaseModel):
     question: str
     debug: bool = False
     session_id: str | None = None
+    history: list[ChatHistoryMessage] = Field(default_factory=list)
 
 class ChatResponse(BaseModel):
     success: bool
@@ -229,6 +230,14 @@ class ConversationState:
     cohort_year: int | None
     domain_intent: str
     topic: str
+
+
+@dataclass(frozen=True)
+class QueryFrame:
+    intent: str
+    entity: str
+    confidence: float
+    slots: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -404,6 +413,30 @@ bm25_corpus = [tokenize_korean_text(doc.content) for doc in all_indexed_docs]
 bm25 = BM25Okapi(bm25_corpus) if bm25_corpus else None
 
 print("🔎 하이브리드 검색 문서 개수:", len(all_indexed_docs))
+
+
+def build_academic_calendar_date_index(docs: list[IndexedDocument]) -> dict[str, list[str]]:
+    date_events: dict[str, list[str]] = defaultdict(list)
+    for doc in docs:
+        source = normalize_entities(doc.source)
+        if "학사일정" not in source or not source.endswith(".json"):
+            continue
+        try:
+            record = json.loads(doc.content)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        date_text = str(record.get("date", "")).strip()
+        events = record.get("events", [])
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_text) or not isinstance(events, list):
+            continue
+        for event in events:
+            event_text = str(event).strip()
+            if event_text and event_text not in date_events[date_text]:
+                date_events[date_text].append(event_text)
+    return dict(date_events)
+
+
+ACADEMIC_CALENDAR_DATE_EVENTS = build_academic_calendar_date_index(all_indexed_docs)
 
 def reciprocal_rank_fusion(rank_lists: list[list[str]], limit: int) -> list[str]:
     fused_scores = defaultdict(float)
@@ -1226,7 +1259,8 @@ def build_generic_faculty_answer(
 
 def format_date_range(start_date: str, end_date: str) -> str:
     if start_date == end_date:
-        return start_date.replace("-", "년 ", 1).replace("-", "월 ") + "일"
+        year, month, day = start_date.split("-")
+        return f"{year}년 {int(month)}월 {int(day)}일"
     start_year, start_month, start_day = start_date.split("-")
     end_year, end_month, end_day = end_date.split("-")
     if start_year == end_year:
@@ -1234,6 +1268,57 @@ def format_date_range(start_date: str, end_date: str) -> str:
             return f"{start_year}년 {int(start_month)}월 {int(start_day)}일부터 {int(end_day)}일까지"
         return f"{start_year}년 {int(start_month)}월 {int(start_day)}일부터 {int(end_month)}월 {int(end_day)}일까지"
     return f"{start_year}년 {int(start_month)}월 {int(start_day)}일부터 {end_year}년 {int(end_month)}월 {int(end_day)}일까지"
+
+
+def extract_calendar_dates(question: str, default_year: int) -> list[str]:
+    normalized_question = normalize_entities(question)
+    dates: list[str] = []
+
+    for year, month, day in re.findall(r"(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일", normalized_question):
+        dates.append(f"{int(year):04d}-{int(month):02d}-{int(day):02d}")
+
+    without_year_dates = re.findall(r"(?<!년\s)(\d{1,2})\s*월\s*(\d{1,2})\s*일", normalized_question)
+    without_year_dates.extend(re.findall(r"(?<!\d)(\d{1,2})[./](\d{1,2})(?!\d)", normalized_question))
+    for month, day in without_year_dates:
+        dates.append(f"{default_year:04d}-{int(month):02d}-{int(day):02d}")
+
+    deduped_dates = []
+    seen = set()
+    for date_text in dates:
+        if date_text in seen:
+            continue
+        seen.add(date_text)
+        deduped_dates.append(date_text)
+    return deduped_dates
+
+
+def event_contains_date(event: dict[str, Any], date_text: str) -> bool:
+    start_date = str(event.get("start_date", ""))
+    end_date = str(event.get("end_date", ""))
+    return bool(start_date and end_date and start_date <= date_text <= end_date)
+
+
+def build_calendar_event_alias_catalog() -> dict[str, list[str]]:
+    reference = ACADEMIC_REFERENCES.get("academic_calendar_2026", {})
+    events = reference.get("events", [])
+    aliases_by_name: dict[str, list[str]] = defaultdict(list)
+    if not isinstance(events, list):
+        return {}
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        name = str(event.get("name", "")).strip()
+        if not name:
+            continue
+        aliases_by_name[name].append(name)
+        for alias in event.get("aliases", []):
+            alias_text = str(alias).strip()
+            if alias_text and alias_text not in aliases_by_name[name]:
+                aliases_by_name[name].append(alias_text)
+    return dict(aliases_by_name)
+
+
+ACADEMIC_CALENDAR_EVENT_ALIASES = build_calendar_event_alias_catalog()
 
 
 def build_academic_calendar_answer(
@@ -1248,12 +1333,51 @@ def build_academic_calendar_answer(
     events = reference.get("events", [])
     if not isinstance(events, list) or not events:
         return None
+    default_year = int(reference.get("academic_year", 2026) or 2026)
 
     requested_term = ""
     if "2학기" in normalized_combined:
         requested_term = "2학기"
     elif "1학기" in normalized_combined:
         requested_term = "1학기"
+
+    requested_dates = extract_calendar_dates(question, default_year)
+    if requested_dates:
+        exact_date_lines = []
+        for requested_date in requested_dates:
+            events_for_date = ACADEMIC_CALENDAR_DATE_EVENTS.get(requested_date, [])
+            if not events_for_date:
+                continue
+            asked_date = format_date_range(requested_date, requested_date)
+            exact_date_lines.append(f"{asked_date} 학사일정은 {', '.join(events_for_date)}입니다.")
+
+        if exact_date_lines:
+            exact_date_lines.append("학사일정은 학교 사정에 따라 변경될 수 있습니다.")
+            return "\n".join(exact_date_lines)
+
+        matched_by_date = []
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            if requested_term and event.get("term") != requested_term:
+                continue
+            for requested_date in requested_dates:
+                if event_contains_date(event, requested_date):
+                    matched_by_date.append((requested_date, event))
+
+        if matched_by_date:
+            lines = []
+            for requested_date, event in matched_by_date[:3]:
+                asked_date = format_date_range(requested_date, requested_date)
+                event_date = format_date_range(str(event.get("start_date", "")), str(event.get("end_date", "")))
+                lines.append(
+                    f"{asked_date}은 {event.get('term', '')} {event.get('name', '학사일정')} 기간({event_date})에 해당합니다."
+                )
+            lines.append("학사일정은 학교 사정에 따라 변경될 수 있습니다.")
+            return "\n".join(lines)
+
+        asked_dates = ", ".join(format_date_range(date_text, date_text) for date_text in requested_dates)
+        return f"{asked_dates}에 등록된 학사일정은 기준 자료에서 확인되지 않습니다.\n학사일정은 학교 사정에 따라 변경될 수 있습니다."
 
     matched_events = []
     for event in events:
@@ -1281,6 +1405,379 @@ def build_academic_calendar_answer(
 
     lines.append("학사일정은 학교 사정에 따라 변경될 수 있습니다.")
     return "\n".join(lines)
+
+
+PORTAL_ROUTE_RULES = [
+    {
+        "terms": ["the조아", "더조아", "thechoa", "the 조아"],
+        "topic": "THE조아",
+        "subject": "THE조아는",
+        "portal": "THE조아",
+        "intro": "THE조아는 아래 주소로 들어가면 됩니다.",
+        "path": "THE조아 바로가기: https://thechoa.chosun.ac.kr/clientMain/a/t/main.do",
+        "after": "로그인 후 상담, 비교과, 진로·취업 등 필요한 학생지원 메뉴를 선택하세요.",
+        "direct": True,
+    },
+    {
+        "terms": ["평생지도교수", "지도교수상담", "교수상담"],
+        "topic": "평생지도교수상담",
+        "subject": "평생지도교수상담은",
+        "portal": "THE조아",
+        "path": "THE조아 로그인 > 학생상담 > 지도교수상담",
+        "after": "신청 후 상담 일정이나 처리 상태는 THE조아의 나의 상담내역에서 확인하세요.",
+        "direct": True,
+    },
+    {
+        "terms": ["학생상담", "상담", "심리상담", "진로상담"],
+        "topic": "학생상담",
+        "subject": "학생상담은",
+        "portal": "THE조아",
+        "path": "THE조아 로그인 > 학생상담",
+        "after": "세부 상담 종류를 선택한 뒤 신청하거나 상담내역에서 진행 상태를 확인하세요.",
+        "direct": False,
+    },
+    {
+        "terms": ["비교과", "비교과프로그램", "마일리지", "프로그램"],
+        "topic": "비교과 프로그램",
+        "subject": "비교과 프로그램은",
+        "portal": "THE조아",
+        "path": "THE조아 로그인 > 비교과 프로그램",
+        "after": "모집 중인 프로그램을 선택해 신청기간과 참여 조건을 확인하세요.",
+        "direct": False,
+    },
+    {
+        "terms": ["수강신청"],
+        "topic": "수강신청",
+        "subject": "수강신청은",
+        "portal": "수강신청 시스템",
+        "path": "수강신청 시스템: http://s.chosun.ac.kr",
+        "after": "학번과 비밀번호로 로그인한 뒤 수강신청 메뉴에서 신청하세요. 일정은 학사일정 또는 학사공지를 함께 확인하세요.",
+        "source": "http://s.chosun.ac.kr",
+        "direct": True,
+    },
+]
+
+ENTITY_CATALOG: dict[str, dict[str, Any]] = {
+    "THE조아": {
+        "aliases": ["the조아", "더조아", "thechoa", "the 조아"],
+        "domain": "student_support_portal",
+        "official_route": "THE조아 바로가기: https://thechoa.chosun.ac.kr/clientMain/a/t/main.do",
+        "fallback": "THE조아 또는 조선대학교 학생지원 관련 공식 페이지에서 확인하세요.",
+    },
+    "평생지도교수상담": {
+        "aliases": ["평생지도교수", "평생지도교수상담", "지도교수상담", "교수상담"],
+        "domain": "student_support_portal",
+        "official_route": "THE조아 로그인 > 학생상담 > 지도교수상담",
+        "fallback": "THE조아 학생상담 메뉴 또는 소속 학과 사무실에서 확인하세요.",
+    },
+    "학생상담": {
+        "aliases": ["학생상담", "상담", "심리상담", "진로상담", "상담내역", "교수님 상담"],
+        "domain": "student_support_portal",
+        "official_route": "THE조아 로그인 > 학생상담",
+        "fallback": "THE조아 학생상담 메뉴 또는 원스톱학생상담센터에서 확인하세요.",
+    },
+    "비교과 프로그램": {
+        "aliases": ["비교과", "비교과프로그램", "비교과 프로그램", "마일리지", "프로그램"],
+        "domain": "student_support_portal",
+        "official_route": "THE조아 로그인 > 비교과 프로그램",
+        "fallback": "THE조아 비교과 프로그램 메뉴에서 모집 여부와 신청기간을 확인하세요.",
+    },
+    "수강신청": {
+        "aliases": ["수강신청", "수강 신청", "강의 신청"],
+        "domain": "academic_calendar",
+        "official_route": "수강신청 시스템: http://s.chosun.ac.kr",
+        "fallback": "수강신청 시스템 또는 학사공지에서 확인하세요.",
+    },
+    "성적열람": {
+        "aliases": ["성적열람", "성적 열람", "성적조회", "성적 조회", "성적 확인"],
+        "domain": "academic_calendar",
+        "fallback": "학사일정, 종합정보시스템, 학사공지에서 확인하세요.",
+    },
+    "기말고사": {"aliases": ["기말고사", "기말"], "domain": "academic_calendar"},
+    "중간고사": {"aliases": ["중간고사", "중간"], "domain": "academic_calendar"},
+    "개강": {"aliases": ["개강"], "domain": "academic_calendar"},
+    "종강": {"aliases": ["종강"], "domain": "academic_calendar"},
+    "학사일정": {"aliases": ["학사일정", "학사정보", "학사 정보"], "domain": "academic_calendar"},
+    "교수진": {"aliases": ["교수", "교수진", "전임교수", "교수님"], "domain": "faculty"},
+    "졸업요건": {"aliases": ["졸업요건", "졸업학점", "졸업 이수", "이수학점", "전공학점"], "domain": "graduation"},
+    "교양교육과정": {
+        "aliases": ["교양교육과정", "교양과정", "함께형", "기초교양", "균형교양", "융합교양", "선택교양", "다른 교양"],
+        "domain": "general_education",
+    },
+    "학과소속": {"aliases": ["단과대학", "소속", "어느 대학", "무슨 대학"], "domain": "department_affiliation"},
+    "휴학": {
+        "aliases": ["휴학", "일반휴학", "특별휴학"],
+        "domain": "rag",
+        "official_route": "종합정보시스템 > 학적 > 휴학신청",
+        "fallback": "정확한 신청기간과 예외 조건은 학사공지 또는 소속 대학 교학팀에서 확인하세요.",
+    },
+    "복학": {
+        "aliases": ["복학"],
+        "domain": "rag",
+        "official_route": "종합정보시스템 > 학적 > 복학신청",
+        "fallback": "정확한 신청기간과 수강신청 연계 조건은 학사공지 또는 소속 대학 교학팀에서 확인하세요.",
+    },
+    "성적포기": {
+        "aliases": ["성적포기", "취득성적포기"],
+        "domain": "rag",
+        "official_route": "차세대종합정보시스템 > 종합정보 > 수업 > 성적 > 성적포기신청",
+        "fallback": "정확한 신청기간과 대상자는 학사공지에서 확인하세요.",
+    },
+    "장학금": {
+        "aliases": ["장학금", "장학", "국가근로장학금", "국가근로"],
+        "domain": "rag",
+        "fallback": "장학금 신청기간은 교내 장학공지와 한국장학재단 공지를 함께 확인하세요.",
+    },
+    "학식": {
+        "aliases": ["학식", "학생식당", "식단", "밥", "중식", "석식"],
+        "domain": "rag",
+        "fallback": "당일 식단은 조선대학교 식단 안내 또는 학생식당 공지에서 확인하세요.",
+    },
+    "수강정정": {
+        "aliases": ["수강정정", "수강 정정", "정정기간", "수강변경", "수강 변경"],
+        "domain": "rag",
+        "fallback": "수강정정 기간과 방법은 학사일정, 수강신청 시스템, 학사공지에서 확인하세요.",
+    },
+    "수강철회": {
+        "aliases": ["수강철회", "수강 철회", "드랍", "drop"],
+        "domain": "rag",
+        "fallback": "수강철회 기간과 대상 과목은 학사공지 또는 종합정보시스템 수업 메뉴에서 확인하세요.",
+    },
+    "계절학기": {
+        "aliases": ["계절학기", "하계 계절학기", "동계 계절학기"],
+        "domain": "rag",
+        "fallback": "계절학기 개설과 신청기간은 학사공지와 수강신청 시스템에서 확인하세요.",
+    },
+    "공결": {
+        "aliases": ["공결", "출석인정", "출석 인정", "공결신청", "공결 신청"],
+        "domain": "rag",
+        "fallback": "공결/출석인정 신청 방법과 인정 사유는 학사공지 또는 소속 학과 사무실에서 확인하세요.",
+    },
+    "등록금": {
+        "aliases": ["등록금", "분납", "등록 기간", "등록기간", "납부"],
+        "domain": "rag",
+        "fallback": "등록금 납부 기간과 분납 정보는 조선대학교 등록금 공지 또는 종합정보시스템에서 확인하세요.",
+    },
+    "증명서": {
+        "aliases": ["증명서", "재학증명서", "성적증명서", "졸업증명서"],
+        "domain": "rag",
+        "fallback": "증명서 발급은 조선대학교 증명서 발급 서비스 또는 종합정보시스템에서 확인하세요.",
+    },
+    "학생증": {
+        "aliases": ["학생증", "학생증 재발급", "모바일 학생증"],
+        "domain": "rag",
+        "fallback": "학생증 발급/재발급은 학생복지팀 또는 관련 공지에서 확인하세요.",
+    },
+    "도서관": {
+        "aliases": ["도서관", "중앙도서관", "열람실"],
+        "domain": "rag",
+        "fallback": "도서관 위치, 운영시간, 연락처는 조선대학교 중앙도서관 공식 페이지에서 확인하세요.",
+    },
+    "셔틀": {
+        "aliases": ["셔틀", "셔틀버스", "통학버스", "버스"],
+        "domain": "rag",
+        "fallback": "셔틀버스 운행 정보는 조선대학교 교통/학생복지 관련 공지에서 확인하세요.",
+    },
+    "와이파이": {
+        "aliases": ["와이파이", "wifi", "wi-fi", "무선인터넷"],
+        "domain": "rag",
+        "fallback": "교내 와이파이 이용 방법은 정보전산원 또는 IT 서비스 안내에서 확인하세요.",
+    },
+}
+
+for event_name, aliases in ACADEMIC_CALENDAR_EVENT_ALIASES.items():
+    ENTITY_CATALOG.setdefault(event_name, {"aliases": [], "domain": "academic_calendar"})
+    for alias in aliases:
+        if alias not in ENTITY_CATALOG[event_name]["aliases"]:
+            ENTITY_CATALOG[event_name]["aliases"].append(alias)
+
+PORTAL_ROUTE_ACTION_TERMS = ["신청", "어디", "경로", "방법", "해야", "하려", "하고", "예약", "접수", "들어가", "바로가기", "접속", "사이트", "시스템"]
+CALENDAR_TIME_TERMS = ["언제", "날짜", "기간", "일정", "몇일", "며칠", "몇 월", "몇월"]
+HOW_TO_TERMS = ["어떻게", "방법", "절차", "하는 법", "하는법"]
+CONTACT_TERMS = ["전화", "전화번호", "연락처", "문의"]
+PERSON_LOOKUP_TERMS = ["누구", "연구실", "연구분야", "전공분야", "담당", "교수진"]
+
+
+def find_entity(text: str) -> str:
+    normalized_text = normalize_entities(text).lower()
+    matches: list[tuple[int, str]] = []
+    for entity, config in ENTITY_CATALOG.items():
+        for alias in config.get("aliases", []):
+            normalized_alias = normalize_entities(str(alias)).lower()
+            if normalized_alias and normalized_alias in normalized_text:
+                matches.append((len(normalized_alias), entity))
+    if not matches:
+        return ""
+    matches.sort(reverse=True)
+    return matches[0][1]
+
+
+def infer_query_intent(text: str, entity: str = "") -> str:
+    normalized_text = normalize_entities(text).lower()
+    if any(term in normalized_text for term in CONTACT_TERMS):
+        return "contact_lookup"
+    if any(term in normalized_text for term in CALENDAR_TIME_TERMS):
+        return "when_is"
+    if any(term in normalized_text for term in HOW_TO_TERMS):
+        return "how_to_apply"
+    if any(term in normalized_text for term in PORTAL_ROUTE_ACTION_TERMS):
+        return "where_to_apply"
+    if entity == "교수진" and any(term in normalized_text for term in PERSON_LOOKUP_TERMS):
+        return "person_lookup"
+    if entity in {"졸업요건", "교양교육과정"}:
+        return "requirement_lookup"
+    if entity and any(term in normalized_text for term in CONTACT_TERMS):
+        return "contact_lookup"
+    return "general_lookup"
+
+
+def build_query_frame(question: str, history: list[ChatHistoryMessage], interpretation: dict[str, Any] | None = None) -> QueryFrame:
+    combined_text = conversation_text(question, history)
+    entity = find_entity(combined_text)
+    intent = infer_query_intent(question, entity)
+    confidence = 0.85 if entity else 0.45
+    if intent != "general_lookup":
+        confidence = min(0.95, confidence + 0.1)
+    if not entity and str((interpretation or {}).get("topic", "")) == "graduation_credits":
+        entity = "졸업요건"
+        intent = "requirement_lookup"
+        confidence = 0.8
+    return QueryFrame(
+        intent=intent,
+        entity=entity,
+        confidence=confidence,
+        slots={
+            "department": infer_department_from_text(combined_text),
+            "cohort_year": extract_cohort_year(combined_text),
+        },
+    )
+
+
+DOMAIN_ROUTE_BY_FRAME = {
+    ("where_to_apply", "수강신청"): "student_support_portal",
+    ("how_to_apply", "수강신청"): "student_support_portal",
+    ("where_to_apply", "THE조아"): "student_support_portal",
+    ("where_to_apply", "평생지도교수상담"): "student_support_portal",
+    ("how_to_apply", "평생지도교수상담"): "student_support_portal",
+    ("where_to_apply", "학생상담"): "student_support_portal",
+    ("how_to_apply", "학생상담"): "student_support_portal",
+    ("where_to_apply", "비교과 프로그램"): "student_support_portal",
+    ("how_to_apply", "비교과 프로그램"): "student_support_portal",
+    ("when_is", "수강신청"): "academic_calendar",
+    ("when_is", "성적열람"): "academic_calendar",
+    ("when_is", "기말고사"): "academic_calendar",
+    ("when_is", "중간고사"): "academic_calendar",
+    ("when_is", "개강"): "academic_calendar",
+    ("when_is", "종강"): "academic_calendar",
+    ("general_lookup", "학사일정"): "academic_calendar",
+    ("contact_lookup", "교수진"): "faculty",
+    ("person_lookup", "교수진"): "faculty",
+    ("requirement_lookup", "졸업요건"): "graduation",
+    ("requirement_lookup", "교양교육과정"): "general_education",
+    ("general_lookup", "학과소속"): "department_affiliation",
+}
+
+
+def select_portal_route(question: str, history: list[ChatHistoryMessage]) -> dict[str, Any] | None:
+    normalized_text = normalize_entities(conversation_text(question, history)).lower()
+    frame = build_query_frame(question, history)
+    routed_domain = DOMAIN_ROUTE_BY_FRAME.get((frame.intent, frame.entity))
+    if routed_domain != "student_support_portal":
+        return None
+    for rule in PORTAL_ROUTE_RULES:
+        if rule["topic"] == frame.entity or any(term in normalized_text for term in rule["terms"]):
+            if rule["topic"] == "수강신청" and any(term in normalized_text for term in CALENDAR_TIME_TERMS):
+                continue
+            return rule
+    entity_config = ENTITY_CATALOG.get(frame.entity, {})
+    if entity_config.get("official_route"):
+        return {
+            "topic": frame.entity,
+            "subject": f"{frame.entity}은",
+            "portal": "공식 시스템",
+            "path": entity_config["official_route"],
+            "after": entity_config.get("fallback", "해당 공식 시스템에서 세부 정보를 확인하세요."),
+            "source": entity_config.get("source", ""),
+            "direct": False,
+        }
+    return None
+
+
+def build_student_support_portal_answer(question: str, history: list[ChatHistoryMessage]) -> StructuredAnswer | None:
+    route = select_portal_route(question, history)
+    if not route:
+        return None
+
+    confidence_prefix = "" if route.get("direct") else "정확한 세부 메뉴명은 업무에 따라 다를 수 있지만, "
+    intro = route.get("intro") or f"{confidence_prefix}{route.get('subject', route['topic'])} {route['portal']}에서 확인하거나 신청하면 됩니다."
+    return StructuredAnswer(
+        answer=(
+            f"{intro}\n"
+            f"경로: {route['path']}\n"
+            f"{route['after']}"
+        ),
+        sources=[route.get("source") or "https://thechoa.chosun.ac.kr/clientMain/a/t/main.do"],
+        answer_mode="student_support_portal",
+        suggestion_context=str(route["topic"]),
+    )
+
+
+def question_mentions_portal_route(question: str, history: list[ChatHistoryMessage]) -> bool:
+    return select_portal_route(question, history) is not None
+
+
+def build_entity_official_fallback_answer(question: str, history: list[ChatHistoryMessage]) -> StructuredAnswer | None:
+    frame = build_query_frame(question, history)
+    entity_config = ENTITY_CATALOG.get(frame.entity, {})
+    fallback = entity_config.get("fallback")
+    official_route = entity_config.get("official_route")
+    if not frame.entity or not fallback:
+        return None
+    if frame.intent not in {"where_to_apply", "how_to_apply", "when_is", "general_lookup"}:
+        return None
+
+    lines = [f"{entity_with_topic_particle(frame.entity)} 공식 자료 확인이 필요한 항목입니다."]
+    if official_route:
+        lines.append(f"확인 경로: {official_route}")
+    lines.append(str(fallback))
+    return StructuredAnswer(
+        answer="\n".join(lines),
+        sources=[str(entity_config.get("source", ""))] if entity_config.get("source") else [],
+        answer_mode="official_fallback",
+        suggestion_context=frame.entity,
+    )
+
+
+def entity_with_topic_particle(entity: str) -> str:
+    if not entity:
+        return "해당 항목은"
+    last_char = entity[-1]
+    if not ("가" <= last_char <= "힣"):
+        return f"{entity}는"
+    has_jongseong = (ord(last_char) - ord("가")) % 28 != 0
+    return f"{entity}{'은' if has_jongseong else '는'}"
+
+
+def hit_matches_query_frame(hit: SearchHit, frame: QueryFrame) -> bool:
+    if not frame.entity:
+        return True
+    entity_config = ENTITY_CATALOG.get(frame.entity, {})
+    aliases = [frame.entity, *[str(alias) for alias in entity_config.get("aliases", [])]]
+    normalized_hit = normalize_entities(f"{hit.source}\n{hit.content}").lower()
+    return any(normalize_entities(alias).lower() in normalized_hit for alias in aliases if alias)
+
+
+def filter_hits_for_query_frame(hits: list[SearchHit], frame: QueryFrame) -> tuple[list[SearchHit], bool]:
+    entity_config = ENTITY_CATALOG.get(frame.entity, {})
+    if not hits or not frame.entity or entity_config.get("domain") not in {"rag"}:
+        return hits, False
+
+    matching_hits = [hit for hit in hits if hit_matches_query_frame(hit, frame)]
+    if not matching_hits:
+        if entity_config.get("fallback"):
+            return [], True
+        return hits, False
+    return matching_hits, len(matching_hits) < len(hits)
 
 
 def question_mentions_general_education_curriculum(question: str) -> bool:
@@ -1454,6 +1951,15 @@ def infer_department_from_text(text: str) -> str:
 
 
 def infer_domain_intent(question: str, history: list[ChatHistoryMessage], interpretation: dict[str, Any] | None = None) -> str:
+    frame = build_query_frame(question, history, interpretation)
+    routed_domain = DOMAIN_ROUTE_BY_FRAME.get((frame.intent, frame.entity))
+    if routed_domain:
+        return routed_domain
+
+    entity_domain = str(ENTITY_CATALOG.get(frame.entity, {}).get("domain", ""))
+    if entity_domain and frame.intent in {"general_lookup", "contact_lookup", "person_lookup", "requirement_lookup", "when_is"}:
+        return entity_domain
+
     current = normalize_entities(question).lower()
     combined = normalize_entities(conversation_text(question, history)).lower()
     interpreted_intent = str((interpretation or {}).get("intent", ""))
@@ -1461,7 +1967,7 @@ def infer_domain_intent(question: str, history: list[ChatHistoryMessage], interp
 
     if any(keyword in current for keyword in ["교수", "교수진", "전임교수"]):
         return "faculty"
-    if any(keyword in current for keyword in ["학사일정", "기말", "중간고사", "시험", "개강", "종강"]):
+    if any(keyword in current for keyword in ["학사일정", "학사정보", "학사 정보", "기말", "중간고사", "시험", "개강", "종강", "수강신청", "성적열람", "성적 열람"]):
         return "academic_calendar"
     if any(keyword in current for keyword in ["교양교육과정", "교양과정", "함께형", "기초교양", "균형교양", "융합교양", "선택교양", "다른 교양"]):
         return "general_education"
@@ -1969,9 +2475,9 @@ def search_docs(query: str) -> SearchResult:
                 hits=hits,
                 debug=build_debug_payload(plan, query, fused_keys, hits, fallback_used),
             )
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="검색 결과가 없습니다."
+        return SearchResult(
+            hits=[],
+            debug=build_debug_payload(plan, query, fused_keys, [], fallback_used),
         )
 
     return SearchResult(
@@ -2022,10 +2528,10 @@ async def interpret_chat_request(question: str, history: list[ChatHistoryMessage
 
 반환 형식:
 {
-  "intent": "graduation_credit_check | graduation_policy_question | campus_info | notice_lookup | general_question",
+  "intent": "graduation_credit_check | graduation_policy_question | campus_info | notice_lookup | portal_route | general_question",
   "standalone_question": "이전 대명사와 생략된 대상을 복원한 독립 질문",
   "department": "학과/전공명 또는 빈 문자열",
-  "topic": "graduation_credits | scholarship | cafeteria | academic_notice | other",
+  "topic": "graduation_credits | scholarship | cafeteria | academic_notice | counseling | portal | other",
   "credit_progress": [{"area": "major | primary_major | general | total | multiple_major", "credits": 0}],
   "missing_fields": ["department", "credit_area", "total_credits", "general_credits"],
   "should_answer_with_calculation": true,
@@ -2035,6 +2541,7 @@ async def interpret_chat_request(question: str, history: list[ChatHistoryMessage
 규칙:
 - 사용자가 말한 이수 학점은 사용자 제공 사실로 추출한다.
 - "그거", "그 학과", "졸업 가능해?", "괜찮아?" 같은 말은 이전 대화에서 대상을 복원한다.
+- "평생지도교수상담", "지도교수상담", "교수상담 신청"은 교수진 조회가 아니라 portal_route/counseling으로 분류한다.
 - 확실하지 않은 값은 만들지 말고 missing_fields에 넣는다.
 - JSON 외 텍스트는 쓰지 않는다.
 """.strip()
@@ -2114,6 +2621,12 @@ def academic_calendar_question_has_event(question: str) -> bool:
     return False
 
 
+def academic_calendar_question_has_lookup_target(question: str) -> bool:
+    reference = ACADEMIC_REFERENCES.get("academic_calendar_2026", {})
+    default_year = int(reference.get("academic_year", 2026) or 2026)
+    return academic_calendar_question_has_event(question) or bool(extract_calendar_dates(question, default_year))
+
+
 def build_clarifying_domain_answer(
     question: str,
     history: list[ChatHistoryMessage],
@@ -2144,7 +2657,7 @@ def build_clarifying_domain_answer(
             answer_mode="clarifying_question",
         )
 
-    if state.domain_intent == "academic_calendar" and not academic_calendar_question_has_event(question):
+    if state.domain_intent == "academic_calendar" and not academic_calendar_question_has_lookup_target(question):
         return StructuredAnswer(
             answer="어떤 학사일정이 궁금한지 알려주세요. 예를 들어 `기말고사 언제야`, `2학기 수강신청 언제야`, `성적열람 언제야`처럼 물어볼 수 있습니다.",
             sources=[],
@@ -2200,6 +2713,11 @@ def build_structured_domain_answer(
             answer_mode="department_summary",
         )
 
+    if state.domain_intent == "student_support_portal":
+        portal_answer = build_student_support_portal_answer(question, history)
+        if portal_answer:
+            return portal_answer
+
     if state.domain_intent == "faculty":
         structured_faculty_answer = build_structured_faculty_answer(question, history, state, enriched_interpretation)
         if structured_faculty_answer:
@@ -2247,6 +2765,10 @@ def basis_line_for_answer(answer_mode: str, sources: list[str]) -> str:
         return "기준: 조선대학교 학과 홈페이지 교수소개 문서"
     if answer_mode == "academic_calendar_2026":
         return "기준: 조선대학교 2026년 학사일정"
+    if answer_mode == "student_support_portal":
+        return "기준: 조선대학교 공식 포털/업무 시스템"
+    if answer_mode == "official_fallback":
+        return "기준: 조선대학교 공식 확인 경로 안내"
     if answer_mode == "general_education_2023":
         return "기준: 2026학년도 1학기 수강가이드 교양과정 이수 안내"
     if answer_mode in {"graduation_policy", "graduation_credit_progress", "department_affiliation", "department_summary"}:
@@ -2279,6 +2801,14 @@ def suggestions_for_answer(answer_mode: str, state: ConversationState, suggestio
         return [f"{department} 교수 연락처", f"{department} 교수 연구실", "교수명으로 더 찾아줘"]
     if answer_mode == "academic_calendar_2026":
         return ["2학기 중간고사 언제야", "성적열람 언제야", "수강신청 언제야"]
+    if answer_mode == "student_support_portal":
+        if suggestion_context == "수강신청":
+            return ["수강신청 언제야", "2학기 수강신청 날짜", "학사일정 알려줘"]
+        if suggestion_context == "비교과 프로그램":
+            return ["비교과 신청기간 어디서 확인해?", "THE조아 바로가기", "상담 신청 어디서 해?"]
+        return ["THE조아 바로가기", "상담내역 어디서 봐?", "비교과 신청은 어디서 해?"]
+    if answer_mode == "official_fallback":
+        return ["공식 공지 어디서 봐?", "문의 전화번호 알려줘", "신청기간 알려줘"]
     if answer_mode == "general_education_2023":
         return ["교양 이수학점은?", "함께형 말고 다른 교양은?", "컴퓨터공학과 교양 이수학점"]
     if answer_mode in {"graduation_policy", "graduation_credit_progress"}:
@@ -2304,17 +2834,35 @@ async def get_gpt_response(
 ):
     system_prompt = """
 너는 조선대학교 정보 도우미야.
-반드시 제공된 참고 정보 안에서만 답변해.
+
+목표:
+- 학생이 실제로 행동할 수 있도록 확인된 조선대학교 정보만 간결하게 안내해.
+
+답변 우선순위:
+1. 구조화된 내부 데이터(학사일정, 졸업요건, 교수진, 교양교육과정, 자주 쓰는 포털 경로)
+2. 제공된 RAG 참고 정보
+3. 공식 웹 검색 결과가 참고 정보로 제공된 경우 그 결과
+4. 확인 불가 안내
+
+검색/확인 원칙:
+- 내부 데이터나 RAG 근거가 질문에 정확히 맞으면 그 근거로 답해.
+- RAG 결과가 없거나 질문 의도와 어긋나면 억지로 답하지 마.
+- 신청 위치, 포털 경로, 최신 공지, 장학금, 비교과, 상담, 식단, 오늘/내일/이번 주/최근/현재/최신 정보는 최신 확인이 필요한 질문으로 취급해.
+- 공식 웹 검색 결과가 참고 정보에 포함된 경우 조선대학교 공식 사이트, THE조아, 학과/부서 공식 페이지, 교내 공지를 우선해.
+- 블로그, 카페, 커뮤니티, 개인 글은 공식 근거가 없을 때만 참고하고 확정적으로 말하지 마.
+- 정확한 세부 메뉴를 확정할 수 없더라도, 학생이 다음에 확인할 공식 포털/부서/공지 위치는 안내해.
 
 [답변 원칙]
 - 이전 대화는 "그거", "방금", "그 학과" 같은 후속 질문의 대상을 파악할 때만 사용해.
 - 실제 답변의 사실, 숫자, 날짜, 학점은 반드시 참고 정보에 있는 내용만 사용해.
 - 단, 사용자가 직접 말한 이수 학점, 학과, 상황은 계산 입력값으로 사용할 수 있어.
-- 정보가 부족하면 "해당 정보를 찾을 수 없습니다"보다 필요한 정보를 자연스럽게 물어봐.
+- 정보가 부족하면 확인된 자료에서는 찾지 못했다고 말하고, 사용자가 다음에 확인할 곳을 안내해.
 - 질문의 학과, 전공, 대상과 정확히 일치하는 정보만 사용해. 다른 학과 정보는 절대 섞지 마.
 - 숫자, 학점, 날짜, 학년도는 참고 정보에 명시된 값만 사용해. 추정하거나 일반화하지 마.
-- 참고 정보가 질문 대상과 정확히 맞지 않으면 "해당 정보를 찾을 수 없습니다."라고 답해.
+- 참고 정보가 질문 대상과 정확히 맞지 않으면 "확인된 자료에서는 찾지 못했습니다."라고 답해.
+- 질문 의도를 키워드 하나로 오판하지 마. 예를 들어 "평생지도교수상담"은 교수진 검색이 아니라 상담 신청/포털 경로 질문이고, "교수 연구실"이나 "교수 연락처"처럼 교수 개인 정보가 목적일 때만 교수진 검색으로 본다.
 - 한국어로 자연스럽고 간결하게 답해.
+- 먼저 결론을 말하고, 필요한 경로나 조건을 짧게 안내해.
 
 [졸업/학점 관련 원칙]
 - 입학연도나 학번이 명시되지 않으면 최신 학년도 기준을 우선해서 답해.
@@ -2406,7 +2954,7 @@ def rag_health():
     status_code=status.HTTP_200_OK
 )
 async def chat(req: ChatRequest):
-    history = history_with_memory(req.session_id)
+    history = req.history or history_with_memory(req.session_id)
     interpretation = await interpret_chat_request(req.question, history)
     state = build_conversation_state(req.question, history, interpretation)
     structured_answer = build_structured_domain_answer(req.question, history, state, interpretation)
@@ -2437,6 +2985,52 @@ async def chat(req: ChatRequest):
 
     search_query = state.standalone_question or build_search_query_from_interpretation(req.question, history, interpretation)
     search_result = search_docs(search_query)
+    query_frame = build_query_frame(req.question, history, interpretation)
+    filtered_hits, relevance_filtered = filter_hits_for_query_frame(search_result.hits, query_frame)
+    if relevance_filtered:
+        search_result = SearchResult(
+            hits=filtered_hits,
+            debug=search_result.debug | {
+                "relevance_filtered": True,
+                "query_frame": query_frame.__dict__,
+            },
+        )
+    elif req.debug:
+        search_result = SearchResult(
+            hits=search_result.hits,
+            debug=search_result.debug | {
+                "relevance_filtered": False,
+                "query_frame": query_frame.__dict__,
+            },
+        )
+    if not search_result.hits:
+        fallback_answer = build_entity_official_fallback_answer(req.question, history)
+        if fallback_answer:
+            if CHAT_MEMORY_ENABLED:
+                conversation_memory.update(req.session_id, req.question, interpretation, state)
+            answer = append_basis_line(
+                fallback_answer.answer,
+                fallback_answer.answer_mode,
+                fallback_answer.sources,
+            )
+            return {
+                "success": True,
+                "answer": answer,
+                "sources": fallback_answer.sources,
+                "suggestions": suggestions_for_answer(
+                    fallback_answer.answer_mode,
+                    state,
+                    fallback_answer.suggestion_context,
+                ),
+                "debug": (
+                    search_result.debug | {
+                        "answer_mode": fallback_answer.answer_mode,
+                        "conversation_state": state.__dict__,
+                        "interpretation": interpretation,
+                        "memory": conversation_memory.debug_snapshot(req.session_id) if CHAT_MEMORY_ENABLED else {},
+                    }
+                ) if req.debug else None,
+            }
     context = "\n".join(hit.content for hit in search_result.hits)
 
     try:
