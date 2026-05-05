@@ -17,8 +17,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
     # 나머지 패키지는 공식 PyPI 저장소에서 안정적으로 설치합니다.
     pip install --no-cache-dir --default-timeout=1000 -r requirements.txt
 
-# 3. 윈도우 스타일 경로 미리 생성 (Update_date.py 호환성)
-RUN mkdir -p /root/Desktop /C:/chroma_db_update /app/chroma_db
+# 3. 필요한 디렉토리 생성
+RUN mkdir -p /app/chroma_db /root/chroma_db_update
 
 COPY . .
 
