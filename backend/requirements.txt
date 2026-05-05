@@ -6,11 +6,13 @@ python-multipart
 # --- AI & RAG (버전을 명시하지 않아 pip가 최적 조합을 찾게 함) ---
 langchain
 langchain-community
+langchain-openai
 chromadb
 langchain-chroma
 langchain-huggingface
 openai
 google-genai
+tavily-python
 
 # --- Data Processing ---
 pypdf

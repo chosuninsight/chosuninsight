@@ -3,8 +3,10 @@ import os
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -15,6 +17,19 @@ import chromadb
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from rank_bm25 import BM25Okapi
+
+try:
+    from langchain.agents import AgentExecutor, create_openai_tools_agent
+    from langchain_community.tools.tavily_search import TavilySearchResults
+    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+    from langchain_openai import ChatOpenAI
+except Exception:
+    AgentExecutor = None
+    ChatOpenAI = None
+    ChatPromptTemplate = None
+    MessagesPlaceholder = None
+    TavilySearchResults = None
+    create_openai_tools_agent = None
 
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
@@ -40,6 +55,16 @@ RRF_K = int(os.getenv("RRF_K", "60"))
 CHAT_MEMORY_ENABLED = os.getenv("CHAT_MEMORY_ENABLED", "true").lower() not in {"0", "false", "no"}
 CHAT_MEMORY_TTL_SECONDS = int(os.getenv("CHAT_MEMORY_TTL_SECONDS", "86400"))
 CHAT_MEMORY_MAX_SESSIONS = int(os.getenv("CHAT_MEMORY_MAX_SESSIONS", "500"))
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "true").lower() not in {"0", "false", "no"}
+WEB_SEARCH_MODEL = os.getenv("WEB_SEARCH_MODEL", CHAT_MODEL_NAME)
+WEB_SEARCH_MAX_RESULTS = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))
+WEB_SEARCH_DEPTH = os.getenv("WEB_SEARCH_DEPTH", "advanced")
+WEB_SEARCH_DOMAINS = [
+    domain.strip()
+    for domain in os.getenv("WEB_SEARCH_DOMAINS", "chosun.ac.kr,instagram.com").split(",")
+    if domain.strip()
+]
 QUERY_EXPANSION_RULES = {
     "컴공": ["컴퓨터공학과", "컴퓨터공학전공"],
     "컴퓨터공학과": ["컴퓨터공학전공", "컴공"],
@@ -1512,6 +1537,16 @@ ENTITY_CATALOG: dict[str, dict[str, Any]] = {
         "domain": "rag",
         "fallback": "교내 와이파이 이용 방법은 정보전산원 또는 IT 서비스 안내에서 확인하세요.",
     },
+    "오늘 날짜": {
+        "aliases": ["오늘 날짜", "오늘날짜", "오늘 며칠", "오늘 몇일", "오늘이 며칠", "현재 날짜", "지금 날짜"],
+        "domain": "current_date",
+    },
+    "축제": {
+        "aliases": ["축제", "대동제", "학교 축제", "조선대학교 축제", "라인업"],
+        "domain": "official_fallback",
+        "source": "https://www3.chosun.ac.kr/chosun/217/subview.do",
+        "fallback": "축제 일정과 라인업은 매년 바뀌는 최신 공지성 정보라 조선대학교 공식 홈페이지 공지사항, 총학생회 공지, 학과/단과대 공지에서 확인해야 합니다.",
+    },
 }
 
 for event_name, aliases in ACADEMIC_CALENDAR_EVENT_ALIASES.items():
@@ -1670,6 +1705,151 @@ def build_entity_official_fallback_answer(question: str, history: list[ChatHisto
         sources=[str(entity_config.get("source", ""))] if entity_config.get("source") else [],
         answer_mode="official_fallback",
         suggestion_context=frame.entity,
+    )
+
+
+_official_web_agent_executor: Any | None = None
+
+
+def official_web_search_available() -> bool:
+    return bool(
+        WEB_SEARCH_ENABLED
+        and TAVILY_API_KEY
+        and AgentExecutor
+        and ChatOpenAI
+        and ChatPromptTemplate
+        and MessagesPlaceholder
+        and TavilySearchResults
+        and create_openai_tools_agent
+    )
+
+
+def get_official_web_agent_executor() -> Any | None:
+    global _official_web_agent_executor
+    if not official_web_search_available():
+        return None
+    if _official_web_agent_executor:
+        return _official_web_agent_executor
+
+    llm = ChatOpenAI(model=WEB_SEARCH_MODEL, temperature=0, api_key=OPENAI_API_KEY)
+    search_tool = TavilySearchResults(
+        max_results=WEB_SEARCH_MAX_RESULTS,
+        search_depth=WEB_SEARCH_DEPTH,
+        include_answer=False,
+        include_raw_content=True,
+        include_domains=WEB_SEARCH_DOMAINS,
+    )
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "\n".join(
+                    [
+                        "너는 조선대학교 최신 공지 확인 도우미야.",
+                        "도구 검색 결과에 있는 사실만 사용해 한국어로 간결하게 답해.",
+                        "조선대학교 공식 홈페이지, 교내 공식 공지, THE조아, 조선대학교 총학생회 인스타그램을 우선해.",
+                        "축제, 대동제, 라인업, 공연, 모집, 신청기간처럼 매년 바뀌는 정보는 최신 공지성 정보로 다뤄.",
+                        "날짜, 장소, 라인업을 확인하지 못하면 확정적으로 말하지 말고 확인 필요하다고 말해.",
+                        "답변에는 확인한 출처 URL을 반드시 포함해.",
+                    ]
+                ),
+            ),
+            ("human", "{input}"),
+            MessagesPlaceholder("agent_scratchpad"),
+        ]
+    )
+    agent = create_openai_tools_agent(llm, [search_tool], prompt)
+    _official_web_agent_executor = AgentExecutor(
+        agent=agent,
+        tools=[search_tool],
+        max_iterations=3,
+        return_intermediate_steps=True,
+        handle_parsing_errors=True,
+        verbose=False,
+    )
+    return _official_web_agent_executor
+
+
+def extract_urls_from_value(value: Any) -> list[str]:
+    urls: list[str] = []
+
+    def walk(item: Any) -> None:
+        if item is None:
+            return
+        if isinstance(item, str):
+            for raw_url in re.findall(r"https?://[^\s\]\)\}>,\"']+", item):
+                url = raw_url.rstrip(".,;:!?")
+                if url and url not in urls:
+                    urls.append(url)
+            return
+        if isinstance(item, dict):
+            for key, nested in item.items():
+                if key in {"url", "permalink", "link"} and isinstance(nested, str):
+                    url = nested.rstrip(".,;:!?")
+                    if url.startswith("http") and url not in urls:
+                        urls.append(url)
+                walk(nested)
+            return
+        if isinstance(item, (list, tuple, set)):
+            for nested in item:
+                walk(nested)
+
+    walk(value)
+    return urls
+
+
+async def build_official_web_search_answer(
+    question: str,
+    history: list[ChatHistoryMessage],
+    interpretation: dict[str, Any] | None = None,
+) -> StructuredAnswer | None:
+    executor = get_official_web_agent_executor()
+    if not executor:
+        return None
+
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
+    history_text = format_chat_history(history, max_messages=4, max_chars=700)
+    interpretation_text = json.dumps(interpretation or {}, ensure_ascii=False)
+    agent_input = f"""
+[오늘 날짜]
+{now.year}년 {now.month}월 {now.day}일
+
+[이전 대화]
+{history_text or "이전 대화 없음"}
+
+[질문 해석]
+{interpretation_text}
+
+[사용자 질문]
+{question}
+
+[검색 지시]
+- 조선대학교 공식 자료와 조선대학교 총학생회 인스타그램을 우선해서 확인해.
+- 검색어에는 조선대학교, 축제, 대동제, 라인업, {now.year}년을 적절히 포함해.
+- 확인된 출처 URL이 없는 정보는 답하지 마.
+""".strip()
+
+    try:
+        result = await executor.ainvoke({"input": agent_input})
+    except Exception as exc:
+        print(f"⚠️ 공식 웹 검색 에이전트 실패: {exc}")
+        return None
+
+    output = str(result.get("output", "")).strip()
+    if not output:
+        return None
+
+    sources = extract_urls_from_value(output)
+    for step in result.get("intermediate_steps", []) or []:
+        sources.extend(url for url in extract_urls_from_value(step) if url not in sources)
+
+    if not sources:
+        return None
+
+    return StructuredAnswer(
+        answer=output,
+        sources=sources[:5],
+        answer_mode="official_web_search",
     )
 
 
@@ -1902,6 +2082,21 @@ def infer_domain_intent(question: str, history: list[ChatHistoryMessage], interp
     if "교양교육과정" in combined and any(keyword in current for keyword in ["말고", "이외", "다른", "더"]):
         return "general_education"
     return "rag"
+
+
+def build_current_date_answer(question: str, history: list[ChatHistoryMessage]) -> StructuredAnswer | None:
+    frame = build_query_frame(question, history)
+    if frame.entity != "오늘 날짜":
+        return None
+
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
+    weekdays = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
+    answer = f"오늘 날짜는 {now.year}년 {now.month}월 {now.day}일 {weekdays[now.weekday()]}입니다. (한국 시간 기준)"
+    return StructuredAnswer(
+        answer=answer,
+        sources=[],
+        answer_mode="current_date",
+    )
 
 
 def build_conversation_state(
@@ -2604,6 +2799,10 @@ def build_structured_domain_answer(
 ) -> StructuredAnswer | None:
     enriched_interpretation = interpretation_with_state(interpretation, state)
 
+    current_date_answer = build_current_date_answer(question, history)
+    if current_date_answer:
+        return current_date_answer
+
     credit_progress_answer = build_graduation_credit_progress_answer(question, history, enriched_interpretation)
     if credit_progress_answer:
         return StructuredAnswer(
@@ -2679,6 +2878,8 @@ def build_structured_domain_answer(
 def basis_line_for_answer(answer_mode: str, sources: list[str]) -> str:
     if answer_mode == "clarifying_question":
         return ""
+    if answer_mode == "current_date":
+        return ""
     if answer_mode in {"computer_science_faculty", "faculty_profile"}:
         return "기준: 조선대학교 학과 홈페이지 교수소개 구조화 데이터"
     if answer_mode == "faculty_generic":
@@ -2689,6 +2890,8 @@ def basis_line_for_answer(answer_mode: str, sources: list[str]) -> str:
         return "기준: 조선대학교 공식 포털/업무 시스템"
     if answer_mode == "official_fallback":
         return "기준: 조선대학교 공식 확인 경로 안내"
+    if answer_mode == "official_web_search":
+        return "기준: 공식 웹 검색 결과"
     if answer_mode == "general_education_2023":
         return "기준: 2026학년도 1학기 수강가이드 교양과정 이수 안내"
     if answer_mode in {"graduation_policy", "graduation_credit_progress", "department_affiliation", "department_summary"}:
@@ -2729,6 +2932,8 @@ def suggestions_for_answer(answer_mode: str, state: ConversationState, suggestio
         return ["THE조아 바로가기", "상담내역 어디서 봐?", "비교과 신청은 어디서 해?"]
     if answer_mode == "official_fallback":
         return ["공식 공지 어디서 봐?", "문의 전화번호 알려줘", "신청기간 알려줘"]
+    if answer_mode == "official_web_search":
+        return ["출처 다시 보여줘", "총학생회 인스타 기준으로 찾아줘", "공식 공지도 찾아줘"]
     if answer_mode == "general_education_2023":
         return ["교양 이수학점은?", "함께형 말고 다른 교양은?", "컴퓨터공학과 교양 이수학점"]
     if answer_mode in {"graduation_policy", "graduation_credit_progress"}:
@@ -2902,6 +3107,35 @@ async def chat(req: ChatRequest):
                 "memory": conversation_memory.debug_snapshot(req.session_id) if CHAT_MEMORY_ENABLED else {},
             } if req.debug else None,
         }
+
+    if state.domain_intent == "official_fallback":
+        web_answer = await build_official_web_search_answer(req.question, history, interpretation)
+        fallback_answer = web_answer or build_entity_official_fallback_answer(req.question, history)
+        if fallback_answer:
+            if CHAT_MEMORY_ENABLED:
+                conversation_memory.update(req.session_id, req.question, interpretation, state)
+            answer = append_basis_line(
+                fallback_answer.answer,
+                fallback_answer.answer_mode,
+                fallback_answer.sources,
+            )
+            return {
+                "success": True,
+                "answer": answer,
+                "sources": fallback_answer.sources,
+                "suggestions": suggestions_for_answer(
+                    fallback_answer.answer_mode,
+                    state,
+                    fallback_answer.suggestion_context,
+                ),
+                "debug": {
+                    "answer_mode": fallback_answer.answer_mode,
+                    "conversation_state": state.__dict__,
+                    "interpretation": interpretation,
+                    "official_web_search_available": official_web_search_available(),
+                    "memory": conversation_memory.debug_snapshot(req.session_id) if CHAT_MEMORY_ENABLED else {},
+                } if req.debug else None,
+            }
 
     search_query = state.standalone_question or build_search_query_from_interpretation(req.question, history, interpretation)
     search_result = search_docs(search_query)

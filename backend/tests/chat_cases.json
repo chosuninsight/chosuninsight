@@ -1,5 +1,19 @@
 [
   {
+    "name": "current_date_direct_answer",
+    "question": "오늘 날짜",
+    "expected_mode": "current_date",
+    "must_include": ["오늘 날짜는", "년", "월", "일", "한국 시간 기준"],
+    "must_not_include": ["확인된 자료", "참고:"]
+  },
+  {
+    "name": "festival_requires_official_fallback",
+    "question": "조선대학교 축제 언제야?",
+    "expected_mode": "official_fallback",
+    "must_include": ["축제", "최신 공지", "조선대학교 공식 홈페이지"],
+    "must_not_include": ["참고:", "IT융합대학", "등록일정"]
+  },
+  {
     "name": "faculty_fulltime",
     "question": "컴퓨터공학과 전임교수 알려줘",
     "expected_mode": "faculty_profile",
