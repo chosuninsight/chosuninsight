@@ -4,7 +4,7 @@ from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 
-from rag_pipeline import build_structured_chunks, rebuild_collection_from_documents
+from rag_pipeline import rebuild_collection_from_documents
 
 
 PERSIST_DIRECTORY = os.getenv("PERSIST_DIRECTORY", "/app/chroma_db")

@@ -987,77 +987,6 @@ def build_structured_faculty_answer(
     )
 
 
-def build_computer_science_faculty_answer(
-    question: str,
-    history: list[ChatHistoryMessage],
-    interpretation: dict[str, Any] | None = None,
-) -> str | None:
-    combined_text = conversation_text(question, history)
-    if not question_mentions_faculty(question):
-        return None
-
-    reference = ACADEMIC_REFERENCES.get("computer_science_faculty", {})
-    faculty = reference.get("faculty", [])
-    if not isinstance(faculty, list) or not faculty:
-        return None
-
-    normalized_question = normalize_entities(question).lower().replace("비전", "비젼")
-    has_computer_science_context = question_mentions_computer_science(combined_text, interpretation)
-    matched_faculty = []
-    for member in faculty:
-        if not isinstance(member, dict):
-            continue
-        member_text = normalize_entities(
-            f"{member.get('name', '')} {member.get('position', '')} {member.get('office', '')} {member.get('field', '')}"
-        ).lower().replace("비전", "비젼")
-        if str(member.get("name", "")).strip() and normalize_entities(str(member.get("name", ""))).lower() in normalized_question:
-            matched_faculty.append(member)
-        elif str(member.get("field", "")).strip() and any(token in member_text for token in tokenize_korean_text(normalized_question)):
-            compact_question = re.sub(r"\s+", "", normalized_question)
-            compact_member_text = re.sub(r"\s+", "", member_text)
-            if "컴퓨터비젼" in compact_question:
-                if "컴퓨터비젼" in compact_member_text:
-                    matched_faculty.append(member)
-                continue
-            field_terms = [
-                term for term in tokenize_korean_text(str(member.get("field", ""))
-                ) if len(term) >= 2 and term not in {"컴퓨터", "ai", "hci"}
-            ]
-            field_terms = [term.replace("비전", "비젼") for term in field_terms]
-            if any(term in normalized_question for term in field_terms):
-                matched_faculty.append(member)
-
-    if not has_computer_science_context and not matched_faculty:
-        return None
-
-    visible_faculty = matched_faculty or faculty
-    asks_phone = any(keyword in normalized_question for keyword in ["전화", "전화번호", "연락처"])
-    asks_office = any(keyword in normalized_question for keyword in ["연구실", "방", "위치", "어디"])
-    asks_field = any(keyword in normalized_question for keyword in ["전공", "분야", "연구분야", "뭐", "무엇"])
-    compact = not matched_faculty and not (asks_phone or asks_office)
-
-    if matched_faculty:
-        lines = [f"{reference.get('department', '컴퓨터공학전공')}에서 질문과 맞는 교수 정보입니다."]
-    else:
-        lines = [f"{reference.get('department', '컴퓨터공학전공')} 전임교수는 다음과 같습니다."]
-
-    for member in visible_faculty:
-        if not isinstance(member, dict):
-            continue
-        details = [str(member.get("position", "")).strip()]
-        field = str(member.get("field", "")).strip()
-        if field and (compact or asks_field or matched_faculty):
-            details.append(f"전공분야 {field}")
-        if member.get("office") and (asks_office or matched_faculty or not compact):
-            details.append(f"연구실 {member.get('office')}")
-        if member.get("phone") and (asks_phone or matched_faculty or not compact):
-            details.append(f"전화 {member.get('phone')}")
-        details_text = ", ".join(detail for detail in details if detail)
-        lines.append(f"- {member.get('name')}: {details_text}")
-
-    return "\n".join(lines)
-
-
 def department_aliases_for_lookup(department: str) -> list[str]:
     if not department:
         return []
@@ -1722,10 +1651,6 @@ def build_student_support_portal_answer(question: str, history: list[ChatHistory
     )
 
 
-def question_mentions_portal_route(question: str, history: list[ChatHistoryMessage]) -> bool:
-    return select_portal_route(question, history) is not None
-
-
 def build_entity_official_fallback_answer(question: str, history: list[ChatHistoryMessage]) -> StructuredAnswer | None:
     frame = build_query_frame(question, history)
     entity_config = ENTITY_CATALOG.get(frame.entity, {})
@@ -1927,11 +1852,6 @@ def extract_credit_progress_entries(text: str) -> list[tuple[str, int]]:
             continue
         entries.append((normalize_credit_area(area), credits))
     return entries
-
-
-def extract_credit_progress(question: str) -> tuple[str, int] | None:
-    entries = extract_credit_progress_entries(question)
-    return entries[0] if entries else None
 
 
 def conversation_text(question: str, history: list[ChatHistoryMessage], max_messages: int = 8) -> str:
