@@ -15,6 +15,7 @@ __pycache__/
 node_modules/
 dist/
 chroma_db_update/
+chroma_db_store/*.sqlite3
 chroma_db_store/*/
 chosun_rag_data/
 .codex
