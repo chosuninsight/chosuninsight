@@ -7,15 +7,14 @@ python-multipart
 langchain
 langchain-community
 langchain-core
-langchain-openai
 chromadb
 langchain-chroma
 langchain-huggingface
 openai
 google-genai
-tavily-python
 torch --index-url https://download.pytorch.org/whl/cpu
 sentence-transformers
+jina
 rank-bm25
 
 # --- Web Crawling & Scraping (추가됨) ---

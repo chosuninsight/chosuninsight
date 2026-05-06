@@ -20,7 +20,6 @@ from rank_bm25 import BM25Okapi
 
 try:
     from langchain.agents import AgentExecutor, create_openai_tools_agent
-    from langchain_community.tools.tavily_search import TavilySearchResults
     from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
     from langchain_openai import ChatOpenAI
 except Exception:
@@ -28,7 +27,6 @@ except Exception:
     ChatOpenAI = None
     ChatPromptTemplate = None
     MessagesPlaceholder = None
-    TavilySearchResults = None
     create_openai_tools_agent = None
 
 from openai import AsyncOpenAI
@@ -55,16 +53,10 @@ RRF_K = int(os.getenv("RRF_K", "60"))
 CHAT_MEMORY_ENABLED = os.getenv("CHAT_MEMORY_ENABLED", "true").lower() not in {"0", "false", "no"}
 CHAT_MEMORY_TTL_SECONDS = int(os.getenv("CHAT_MEMORY_TTL_SECONDS", "86400"))
 CHAT_MEMORY_MAX_SESSIONS = int(os.getenv("CHAT_MEMORY_MAX_SESSIONS", "500"))
-TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+JINA_API_KEY = os.getenv("JINA_API_KEY")
 WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "true").lower() not in {"0", "false", "no"}
 WEB_SEARCH_MODEL = os.getenv("WEB_SEARCH_MODEL", CHAT_MODEL_NAME)
 WEB_SEARCH_MAX_RESULTS = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))
-WEB_SEARCH_DEPTH = os.getenv("WEB_SEARCH_DEPTH", "advanced")
-WEB_SEARCH_DOMAINS = [
-    domain.strip()
-    for domain in os.getenv("WEB_SEARCH_DOMAINS", "chosun.ac.kr,instagram.com").split(",")
-    if domain.strip()
-]
 QUERY_EXPANSION_RULES = {
     "컴공": ["컴퓨터공학과", "컴퓨터공학전공"],
     "컴퓨터공학과": ["컴퓨터공학전공", "컴공"],
@@ -1708,18 +1700,64 @@ def build_entity_official_fallback_answer(question: str, history: list[ChatHisto
     )
 
 
+# --- Jina Search Tool ---
+import requests
+from typing import Optional, Dict
+
+class JinaSearchTool:
+    """
+    Jina AI's Search API (s.jina.ai)를 사용하여 웹 검색을 수행하고
+    LLM이 이해하기 좋은 정제된 텍스트(Markdown 등)를 반환하는 커스텀 도구.
+    """
+    name = "jina_search"
+    description = (
+        "조선대학교 관련 최신 정보(축제 라인업, 공지사항 등)를 웹에서 검색할 때 사용합니다. "
+        "검색 쿼리를 입력하면 검색 결과의 정제된 텍스트 내용을 반환합니다."
+    )
+
+    def __init__(self, api_key: Optional[str] = None, max_results: int = 5):
+        self.api_key = api_key
+        self.max_results = max_results
+        self.base_url = "https://s.jina.ai/"
+
+    def run(self, query: str) -> str:
+        url = f"{self.base_url}{requests.utils.quote(query)}"
+        headers = {"Accept": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            
+            # s.jina.ai API 응답 구조 (data['data']에 결과 리스트가 들어있다고 가정)
+            results = data.get("data", [])
+            if not results:
+                return "검색 결과가 없습니다."
+            
+            formatted = []
+            for i, res in enumerate(results[:self.max_results]):
+                title = res.get("title", "No Title")
+                content = res.get("content", "No Content")
+                link = res.get("url", "")
+                formatted.append(f"[{i+1}] {title}\nURL: {link}\nContent: {content}\n")
+            
+            return "\n".join(formatted)
+        except Exception as e:
+            return f"Jina Search API 호출 중 오류 발생: {str(e)}"
+
 _official_web_agent_executor: Any | None = None
 
 
 def official_web_search_available() -> bool:
     return bool(
         WEB_SEARCH_ENABLED
-        and TAVILY_API_KEY
+        and JINA_API_KEY
         and AgentExecutor
         and ChatOpenAI
         and ChatPromptTemplate
         and MessagesPlaceholder
-        and TavilySearchResults
         and create_openai_tools_agent
     )
 
@@ -1732,13 +1770,18 @@ def get_official_web_agent_executor() -> Any | None:
         return _official_web_agent_executor
 
     llm = ChatOpenAI(model=WEB_SEARCH_MODEL, temperature=0, api_key=OPENAI_API_KEY)
-    search_tool = TavilySearchResults(
-        max_results=WEB_SEARCH_MAX_RESULTS,
-        search_depth=WEB_SEARCH_DEPTH,
-        include_answer=False,
-        include_raw_content=True,
-        include_domains=WEB_SEARCH_DOMAINS,
+    
+    # 커스텀 JinaSearchTool 사용
+    search_tool = JinaSearchTool(api_key=JINA_API_KEY, max_results=WEB_SEARCH_MAX_RESULTS)
+    
+    # LangChain 도구 형식으로 래핑 (run 메소드 연결)
+    from langchain.tools import Tool
+    langchain_search_tool = Tool(
+        name=search_tool.name,
+        func=search_tool.run,
+        description=search_tool.description
     )
+
     prompt = ChatPromptTemplate.from_messages(
         [
             (
@@ -1758,10 +1801,11 @@ def get_official_web_agent_executor() -> Any | None:
             MessagesPlaceholder("agent_scratchpad"),
         ]
     )
-    agent = create_openai_tools_agent(llm, [search_tool], prompt)
+    
+    agent = create_openai_tools_agent(llm, [langchain_search_tool], prompt)
     _official_web_agent_executor = AgentExecutor(
         agent=agent,
-        tools=[search_tool],
+        tools=[langchain_search_tool],
         max_iterations=3,
         return_intermediate_steps=True,
         handle_parsing_errors=True,
