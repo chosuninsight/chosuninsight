@@ -17,3 +17,4 @@ dist/
 chroma_db_update/
 chroma_db_store/
 .codex
+web_cache.json

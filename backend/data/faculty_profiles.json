@@ -23,6 +23,23 @@
     ]
   },
   {
+    "department": "인공지능공학과",
+    "display_department": "AI·SW학부(인공지능공학전공)",
+    "college": "IT융합대학",
+    "aliases": ["인공지능공학과", "인공지능공학전공", "인공지능학과", "AI공학과", "AI·SW학부 인공지능공학전공"],
+    "source": "조선대학교 AI·SW학부(인공지능공학전공) 교수소개",
+    "source_url": "https://eie.chosun.ac.kr/aie/7974/subview.do",
+    "faculty": [
+      {"name": "김판구", "position": "겸임교수", "phone": "7636", "office": "IT-7111", "field": ""},
+      {"name": "변재영", "position": "겸임교수", "phone": "7021", "office": "IT-8119", "field": ""},
+      {"name": "양희덕", "position": "겸임교수", "phone": "7474", "office": "IT-10106", "field": ""},
+      {"name": "전찬준", "position": "겸임교수", "phone": "7736", "office": "IT-10120", "field": ""},
+      {"name": "김원열", "position": "조교수", "phone": "7762", "office": "IT-4227", "field": ""},
+      {"name": "최규호", "position": "조교수", "phone": "7763", "office": "IT-4126", "field": ""},
+      {"name": "김대호", "position": "조교수", "phone": "7698", "office": "IT-10111", "field": ""}
+    ]
+  },
+  {
     "department": "전자공학과",
     "display_department": "전자공학과",
     "college": "IT융합대학",
