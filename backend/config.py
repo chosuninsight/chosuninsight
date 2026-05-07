@@ -36,6 +36,7 @@ ACADEMIC_POLICY_PATH = Path(__file__).resolve().parent / "data" / "academic_poli
 ACADEMIC_REFERENCE_PATH = Path(__file__).resolve().parent / "data" / "academic_reference_answers.json"
 FACULTY_PROFILE_PATH = Path(__file__).resolve().parent / "data" / "faculty_profiles.json"
 KNOWLEDGE_STORE_PATH = Path(__file__).resolve().parent / "data" / "web_knowledge_store.json"
+CAFETERIA_DATA_PATH = Path(__file__).resolve().parent.parent / "chosun_rag_data" / "조선대학교_식단.txt"
 
 # Web/CORS
 ALLOWED_ORIGINS = [

@@ -176,6 +176,7 @@ ENTITY_CATALOG: dict[str, dict[str, Any]] = {
     "중간고사": {"aliases": ["중간고사", "중간"], "domain": "academic_calendar"},
     "개강": {"aliases": ["개강"], "domain": "academic_calendar"},
     "종강": {"aliases": ["종강"], "domain": "academic_calendar"},
+    "방학": {"aliases": ["방학", "여름방학", "겨울방학", "하계방학", "동계방학"], "domain": "academic_calendar"},
     "학사일정": {"aliases": ["학사일정", "학사정보", "학사 정보"], "domain": "academic_calendar"},
     "교수진": {"aliases": ["교수", "교수진", "전임교수", "교수님"], "domain": "faculty"},
     "졸업요건": {"aliases": ["졸업요건", "졸업학점", "졸업 이수", "이수학점", "전공학점"], "domain": "graduation"},
@@ -208,8 +209,8 @@ ENTITY_CATALOG: dict[str, dict[str, Any]] = {
         "fallback": "장학금 신청기간은 교내 장학공지와 한국장학재단 공지를 함께 확인하세요.",
     },
     "학식": {
-        "aliases": ["학식", "학생식당", "식단", "밥", "중식", "석식"],
-        "domain": "rag",
+        "aliases": ["학식", "학생식당", "식단", "밥", "중식", "석식", "점심", "저녁", "기숙사 식당", "기숙사 식단"],
+        "domain": "cafeteria",
         "fallback": "당일 식단은 조선대학교 식단 안내 또는 학생식당 공지에서 확인하세요.",
     },
     "축제": {
@@ -352,13 +353,14 @@ def build_structured_faculty_answer(question: str, history: list[ChatHistoryMess
     office_q = any(k in norm_q for k in ["연구실", "위치"])
     compact = not matched and not phone_q and not office_q
     dept = str(profile.get("display_department") or profile.get("department") or "해당 학과")
-    lines = [f"{dept} {'질문과 맞는 ' if matched else ''}교수진 정보입니다."]
+    
+    lines = [f"[{dept}]"]
     for m in visible:
         dtl = [str(m.get("position", "")).strip()]
         if m.get("field"): dtl.append(f"전공분야 {m['field']}")
         if m.get("office") and (office_q or matched or not compact): dtl.append(f"연구실 {m['office']}")
         if m.get("phone") and (phone_q or matched or not compact): dtl.append(f"전화 {m['phone']}")
-        lines.append(f"- {m.get('name')}: {', '.join(d for d in dtl if d)}")
+        lines.append(f"{m.get('name')}: {', '.join(d for d in dtl if d)}")
     return StructuredAnswer(answer="\n".join(lines), sources=[profile.get("source") or "https://www.chosun.ac.kr"], answer_mode="faculty_profile")
 
 # --- Portal Logic ---
@@ -377,7 +379,9 @@ def build_portal_answer(question: str, history: list[ChatHistoryMessage]) -> Str
     if not route: return None
     conf_prefix = "" if route.get("direct") else "정확한 메뉴명은 다를 수 있지만, "
     intro = route.get("intro") or f"{conf_prefix}{route.get('subject', route['topic'])} {route['portal']}에서 확인/신청 가능합니다."
-    return StructuredAnswer(answer=f"{intro}\n경로: {route['path']}\n{route['after']}", sources=[route.get("source") or "https://thechoa.chosun.ac.kr"], answer_mode="student_support_portal", suggestion_context=str(route["topic"]))
+    path_text = f"경로: {route['path']}"
+    after_text = f"참고: {route['after']}"
+    return StructuredAnswer(answer=f"{intro}\n{path_text}\n{after_text}", sources=[route.get("source") or "https://thechoa.chosun.ac.kr"], answer_mode="student_support_portal", suggestion_context=str(route["topic"]))
 
 # --- Calendar Logic ---
 def build_academic_calendar_date_index(docs: list[IndexedDocument]) -> dict[str, list[str]]:
@@ -411,25 +415,37 @@ def build_academic_calendar_answer(question: str, history: list[ChatHistoryMessa
     def_year = int(ref.get("academic_year", 2026))
     term = "2학기" if "2학기" in norm_q else "1학기" if "1학기" in norm_q else ""
     dates = extract_calendar_dates(question, def_year)
+    
     if dates:
         lines = []
         for d in dates:
             evs = ACADEMIC_CALENDAR_DATE_EVENTS.get(d, [])
-            if evs: lines.append(f"{format_date_range(d,d)} 학사일정은 {', '.join(evs)}입니다.")
+            if evs: lines.append(f"{format_date_range(d,d)} 일정: {', '.join(evs)}")
         if lines:
             lines.append("학사일정은 학교 사정에 따라 변경될 수 있습니다.")
             return StructuredAnswer(answer="\n".join(lines), sources=[ref.get("source") or "https://www.chosun.ac.kr"], answer_mode="academic_calendar_2026")
+
+    # If no dates, search by event name
     matched = []
     for e in events:
         if not isinstance(e, dict): continue
-        if term and e.get("term") != term: continue
+        # Only check term if specified and event has a term
+        if term and e.get("term") and e.get("term") != term: continue
+        
         name = str(e.get("name", "")).lower()
         aliases = [str(a).lower() for a in e.get("aliases", [])]
-        if name in norm_q or any(a and a in norm_q for a in aliases): matched.append(e)
-    if not matched: return None
-    lines = [f"{e.get('term','')} {e.get('name','')} 일정은 {format_date_range(str(e.get('start_date','')), str(e.get('end_date','')))}입니다." for e in matched[:3]]
-    lines.append("학사일정은 학교 사정에 따라 변경될 수 있습니다.")
-    return StructuredAnswer(answer="\n".join(lines), sources=[ref.get("source") or "https://www.chosun.ac.kr"], answer_mode="academic_calendar_2026")
+        if name in norm_q or any(a and a in norm_q for a in aliases):
+            matched.append(e)
+            
+    if matched:
+        lines = []
+        for e in matched:
+            name_label = f"{e.get('term', '')} {e.get('name', '')}".strip()
+            lines.append(f"{name_label}: {format_date_range(str(e.get('start_date', '')), str(e.get('end_date', '')))}")
+        lines.append("학사일정은 학교 사정에 따라 변경될 수 있습니다.")
+        return StructuredAnswer(answer="\n".join(lines), sources=[ref.get("source") or "https://www.chosun.ac.kr"], answer_mode="academic_calendar_2026")
+        
+    return None
 
 # --- Graduation Logic ---
 CREDIT_PROGRESS_PATTERN = re.compile(r"(전공|교양|총|취득)\s*(\d{1,3})\s*(학점|점)?", re.IGNORECASE)
@@ -471,8 +487,8 @@ def append_credit_gap_for_area(lines: list[str], policy: dict[str, Any], area: s
     if not req_key or req_key not in policy: return
     req = int(policy[req_key])
     gap = req - completed
-    if gap > 0: lines.append(f"- {area}은 {completed}학점 이수하셨네요. 졸업까지 {gap}학점 더 필요합니다. (기준 {req})")
-    else: lines.append(f"- {area}은 {completed}학점으로 기준({req})을 충족하셨습니다!")
+    if gap > 0: lines.append(f"{area}은 {completed}학점 이수하셨네요. 졸업까지 {gap}학점 더 필요합니다. (기준 {req})")
+    else: lines.append(f"{area}은 {completed}학점으로 기준({req})을 충족하셨습니다!")
 
 def build_graduation_credit_progress_answer(question: str, history: list[ChatHistoryMessage], interpretation: dict[str, Any] | None = None) -> str | None:
     prog_state = build_credit_progress_state(question, history)
@@ -484,7 +500,7 @@ def build_graduation_credit_progress_answer(question: str, history: list[ChatHis
         return None
     dept = policy.get("department", "해당 학과")
     cohort = policy.get("admission_cohort", "최신 기준")
-    lines = [f"{dept} {cohort} 졸업이수학점 기준입니다."]
+    lines = [f"[{dept} {cohort} 기준]"]
     for area, val in prog_state.items(): append_credit_gap_for_area(lines, policy, area, val, question)
     if "총" not in prog_state: lines.append("전체 충족 여부를 보려면 총 이수학점도 알려주세요.")
     return "\n".join(lines) if len(lines) > 1 else None
@@ -545,6 +561,103 @@ def build_conversation_state(question: str, history: list[ChatHistoryMessage], i
         topic=str(interpretation.get("topic", ""))
     )
 
+# --- Cafeteria Logic ---
+def build_cafeteria_answer(question: str, history: list[ChatHistoryMessage]) -> StructuredAnswer | None:
+    if not CAFETERIA_DATA_PATH.exists(): return None
+    
+    try:
+        content = CAFETERIA_DATA_PATH.read_text(encoding="utf-8")
+    except:
+        return None
+
+    # Get target date
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
+    target_date_str = now.strftime("%Y.%m.%d")
+    
+    # Check if a specific date was mentioned in the question
+    date_matches = re.findall(r"(\d{1,2})월\s*(\d{1,2})일", question)
+    if date_matches:
+        m, d = date_matches[0]
+        target_date_str = f"{now.year}.{int(m):02d}.{int(d):02d}"
+
+    sections = content.split("---")
+    cafeteria_results = []
+
+    for section in sections:
+        section = section.strip()
+        if not section: continue
+        
+        lines = section.split("\n")
+        restaurant_name = "알 수 없는 식당"
+        
+        # First pass: find restaurant name
+        for line in lines:
+            if line.startswith("식당명:"):
+                restaurant_name = line.replace("식당명:", "").strip()
+                break
+        
+        # Second pass: group lines by date
+        meals_by_date = defaultdict(list)
+        current_date = None
+        
+        for line in lines:
+            line = line.strip()
+            if not line or "|" not in line: continue
+            
+            # Check if line starts with a date (YYYY.MM.DD)
+            date_match = re.match(r"(\d{4}\.\d{2}\.\d{2})", line)
+            if date_match:
+                current_date = date_match.group(1)
+                # Remove date part for processing meal content
+                parts = [p.strip() for p in line.split("|")]
+                if len(parts) >= 3:
+                    # Parts[0] is date, Parts[1] is meal type, Parts[2] is content...
+                    for i in range(1, len(parts), 2):
+                        if i + 1 < len(parts):
+                            meals_by_date[current_date].append((parts[i], parts[i+1]))
+            elif current_date:
+                # This line belongs to the current_date (e.g., dinner line)
+                parts = [p.strip() for p in line.split("|")]
+                if len(parts) >= 2:
+                    for i in range(0, len(parts), 2):
+                        if i + 1 < len(parts):
+                            meals_by_date[current_date].append((parts[i], parts[i+1]))
+        
+        target_meals = meals_by_date.get(target_date_str)
+        if target_meals:
+            # Filter out "No info"
+            valid_meals = [m for m in target_meals if "등록된 식단내용이" not in m[1]]
+            if valid_meals:
+                cafeteria_results.append({
+                    "name": restaurant_name,
+                    "meals": valid_meals
+                })
+
+    if not cafeteria_results:
+        return StructuredAnswer(
+            answer=f"{target_date_str}의 식단 정보가 등록되지 않았습니다.",
+            sources=[CAFETERIA_DATA_PATH.name],
+            answer_mode="cafeteria"
+        )
+
+    # Build response text
+    ans_lines = []
+    for res in cafeteria_results:
+        if ans_lines: ans_lines.append("") # Spacing between restaurants
+        ans_lines.append(f"[{res['name']}]")
+        for m_type, m_content in res["meals"]:
+            # Clean up meal content
+            clean_content = m_content.replace("< 선택식>", "선택식:").replace("<선택식>", "선택식:").replace("*", "")
+            # Ensure no double commas from cleanup
+            clean_content = re.sub(r",\s*,", ",", clean_content).strip(", ")
+            ans_lines.append(f"{m_type}: {clean_content}")
+
+    return StructuredAnswer(
+        answer="\n".join(ans_lines),
+        sources=[CAFETERIA_DATA_PATH.name],
+        answer_mode="cafeteria"
+    )
+
 def build_structured_domain_answer(question: str, history: list[ChatHistoryMessage], state: ConversationState, interpretation: dict[str, Any] | None = None) -> StructuredAnswer | None:
     # 1. Portal Route
     portal_answer = build_portal_answer(question, history)
@@ -560,7 +673,12 @@ def build_structured_domain_answer(question: str, history: list[ChatHistoryMessa
         faculty_answer = build_structured_faculty_answer(question, history, state, interpretation)
         if faculty_answer: return faculty_answer
 
-    # 4. Graduation
+    # 4. Cafeteria
+    if state.domain_intent == "cafeteria":
+        meal_answer = build_cafeteria_answer(question, history)
+        if meal_answer: return meal_answer
+
+    # 5. Graduation
     if state.domain_intent == "graduation" or any(k in question for k in CREDIT_FOLLOWUP_KEYWORDS):
         grad_answer = build_graduation_credit_progress_answer(question, history, interpretation)
         if grad_answer:
@@ -639,13 +757,20 @@ def build_entity_official_fallback_answer(question: str, history: list[ChatHisto
     return StructuredAnswer(answer="\n".join(lines), sources=[entity_config.get("source") or "https://www3.chosun.ac.kr"], answer_mode="official_fallback")
 
 async def get_gpt_response(question: str, context: str, history: list[ChatHistoryMessage], interpretation: dict[str, Any] | None = None) -> str:
-    system_prompt = """너는 조선대학교 정보 도우미야. 
-목표: 학생이 실제로 행동할 수 있도록 확인된 조선대학교 정보만 간결하게 안내해.
-답변 우선순위:
-1. 제공된 참고 정보
-2. 확인된 출처 URL이 있는 정보
-기타: 답변에서 '*' 문자를 사용하지 마.
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
+    system_prompt = f"""너는 조선대학교 정보 도우미야. 제공된 [참고 정보]를 바탕으로 사용자의 질문에 답변해.
+[오늘 날짜] {now.year}-{now.month:02d}-{now.day:02d}
+
+목표: 학생이 실제로 행동할 수 있도록 확인된 정보만 간결하게 안내해.
+지침:
+- 답변은 항상 간결하고 명확하게 작성해.
+- 문장 앞에 '-', '•', '*' 등 어떠한 리스트 기호도 사용하지 마.
+- 정보가 여러 개인 경우 기호 없이 줄바꿈으로만 구분해.
+- 문장 끝에 이모지를 절대 사용하지 마.
+- '*' 문자를 사용한 강조(볼드체)를 하지 마.
+- 모르는 정보는 지어내지 말고 "관련 정보를 찾지 못했습니다"라고 답변해.
 """
+
     history_text = format_chat_history(history, max_messages=5)
     user_prompt = f"[참고 정보]\n{context}\n\n[이전 대화]\n{history_text}\n\n[질문]\n{question}"
     try:
@@ -661,7 +786,65 @@ def basis_line_for_answer(answer_mode: str, sources: list[str]) -> str:
     return ""
 
 def append_basis_line(answer: str, answer_mode: str, sources: list[str]) -> str:
-    return answer
+    """모든 답변에 대해 일관된 포맷팅을 적용합니다 (기호 완전 제거)."""
+    # 1. 제목 맵핑
+    title_map = {
+        "cafeteria": "식단 정보 안내",
+        "faculty_profile": "교수진 정보 상세",
+        "academic_calendar_2026": "학사일정 주요 안내",
+        "graduation_credit_progress": "졸업 이수학점 자가진단",
+        "student_support_portal": "학생지원 포털 접속 안내",
+        "official_web_search": "최신 웹 검색 결과",
+        "official_fallback": "공식 안내 채널 안내",
+        "rag": "관련 규정/지침 안내",
+        "current_date": "현재 날짜 정보"
+    }
+    
+    # 2. 전처리: 불필요한 특수문자 제거 및 줄바꿈 정리
+    clean_answer = answer.replace("*", "").strip()
+    
+    # 모든 리스트 기호(-, •, *, ㆍ) 제거
+    lines = clean_answer.split("\n")
+    formatted_lines = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            formatted_lines.append("")
+            continue
+        
+        # 줄 시작부분의 기호 제거 (반복적으로 적용)
+        while line.startswith(("-", "•", "*", "ㆍ", ".")):
+            line = line[1:].strip()
+        
+        formatted_lines.append(line)
+    
+    clean_answer = "\n".join(formatted_lines).strip()
+    
+    # 3. 제목 추가 (이미 제목 형태의 첫 줄이 있다면 생략)
+    title = title_map.get(answer_mode)
+    if title:
+        first_line = clean_answer.split("\n")[0]
+        if not (first_line.startswith("[") and first_line.endswith("]")):
+            clean_answer = f"[{title}]\n\n{clean_answer}"
+            
+    return clean_answer
 
 def suggestions_for_answer(answer_mode: str, state: ConversationState, suggestion_context: str = "") -> list[str]:
-    return []
+    """답변 모드와 상태에 맞는 추천 질문을 생성합니다."""
+    suggestions = []
+    
+    if answer_mode == "cafeteria":
+        suggestions = ["내일 식단은 뭐야?", "기숙사 식당 위치 알려줘", "학식 가격은 얼마야?"]
+    elif answer_mode == "faculty_profile":
+        suggestions = [f"{state.department or '학과'} 사무실 번호는?", "다른 교수님 더 보기", "수강신청 일정 알려줘"]
+    elif answer_mode == "graduation_credit_progress":
+        suggestions = ["교양은 몇 학점 더 들어야 해?", "졸업 논문 요건은 뭐야?", "마일리지 확인하는 법"]
+    elif answer_mode == "academic_calendar_2026":
+        suggestions = ["여름방학 언제 시작해?", "성적 조회 기간은?", "수강신청 바로가기"]
+    elif answer_mode == "rag":
+        if "장학" in state.topic or "장학" in state.standalone_question:
+            suggestions = ["신청 가능한 장학금 목록", "국가장학금 신청 기간", "성적 장학금 기준"]
+        else:
+            suggestions = ["더 자세한 공지사항 보기", "관련 메뉴 바로가기", "오늘 날짜 알려줘"]
+            
+    return suggestions[:3]

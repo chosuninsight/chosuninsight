@@ -85,7 +85,7 @@ async def chat(req: ChatRequest):
     interpretation = await interpret_chat_request(req.question, history)
     state = build_conversation_state(req.question, history, interpretation)
     
-    # 2. 구조화된 도메인 답변 (학사일정, 교수진, 졸업요건 등)
+    # 2. 구조화된 도메인 답변 (학사일정, 교수진, 졸업요건, 식단 등)
     structured_answer = build_structured_domain_answer(req.question, history, state, interpretation)
     if structured_answer:
         if CHAT_MEMORY_ENABLED:
@@ -98,47 +98,56 @@ async def chat(req: ChatRequest):
             "debug": {"answer_mode": structured_answer.answer_mode, "interpretation": interpretation} if req.debug else None,
         }
 
-    # 3. 공식 웹 검색 / Fallback 처리
-    if state.domain_intent in ["official_fallback", "faculty"]:
-        web_answer = await build_official_web_search_answer_direct(req.question, history, interpretation)
-        if web_answer:
+    # 3. 일반 RAG 검색 수행
+    search_query = interpretation.get("standalone_question") or req.question
+    search_result = search_docs(search_query)
+    
+    # RAG 결과가 있는 경우 답변 생성
+    if search_result.hits:
+        context = "\n".join(hit.content for hit in search_result.hits)
+        answer = await get_gpt_response(req.question, context, history, interpretation)
+        
+        # LLM이 '정보 없음' 취지의 답변을 했는지 검사
+        negative_patterns = ["정보를 찾지 못했습니다", "관련 자료가 없습니다", "알 수 없습니다", "확인할 수 없습니다"]
+        if not any(p in answer for p in negative_patterns):
             if CHAT_MEMORY_ENABLED:
                 conversation_memory.update(req.session_id, req.question, interpretation, state)
             return {
                 "success": True,
-                "answer": append_basis_line(web_answer.answer, web_answer.answer_mode, web_answer.sources),
+                "answer": append_basis_line(answer, "rag", []),
                 "sources": [],
-                "suggestions": suggestions_for_answer(web_answer.answer_mode, state, web_answer.suggestion_context),
-            }
-        
-        fallback_answer = build_entity_official_fallback_answer(req.question, history)
-        if fallback_answer:
-            return {
-                "success": True,
-                "answer": append_basis_line(fallback_answer.answer, fallback_answer.answer_mode, fallback_answer.sources),
-                "sources": [],
-                "suggestions": suggestions_for_answer(fallback_answer.answer_mode, state, fallback_answer.suggestion_context),
+                "suggestions": suggestions_for_answer("rag", state),
             }
 
-    # 4. 일반 RAG 검색
-    search_query = interpretation.get("standalone_question") or req.question
-    search_result = search_docs(search_query)
+    # 4. 최종 Fallback: 실시간 웹 검색 (Jina AI)
+    # RAG에서 답을 못 찾았거나, LLM이 답을 못 한다고 한 경우 실행
+    web_answer = await build_official_web_search_answer_direct(req.question, history, interpretation)
+    if web_answer:
+        if CHAT_MEMORY_ENABLED:
+            conversation_memory.update(req.session_id, req.question, interpretation, state)
+        return {
+            "success": True,
+            "answer": append_basis_line(web_answer.answer, web_answer.answer_mode, web_answer.sources),
+            "sources": [],
+            "suggestions": suggestions_for_answer(web_answer.answer_mode, state, web_answer.suggestion_context),
+        }
     
-    if not search_result.hits:
-        return {"success": True, "answer": "확인된 자료에서 관련 정보를 찾지 못했습니다. 소속 학과 사무실이나 홈페이지 공지사항을 확인해 보세요.", "sources": []}
+    # 5. 최후의 보루: 안내 답변
+    fallback_answer = build_entity_official_fallback_answer(req.question, history)
+    if fallback_answer:
+        return {
+            "success": True,
+            "answer": append_basis_line(fallback_answer.answer, fallback_answer.answer_mode, fallback_answer.sources),
+            "sources": [],
+            "suggestions": suggestions_for_answer(fallback_answer.answer_mode, state, fallback_answer.suggestion_context),
+        }
 
-    context = "\n".join(hit.content for hit in search_result.hits)
-    answer = await get_gpt_response(req.question, context, history, interpretation)
-    
-    if CHAT_MEMORY_ENABLED:
-        conversation_memory.update(req.session_id, req.question, interpretation, state)
-
+    # 모든 수단 실패 시 (매우 희박)
     return {
         "success": True,
-        "answer": append_basis_line(answer, "rag", []),
+        "answer": append_basis_line("현재 관련 정보를 찾기 어렵습니다. 정확한 내용은 조선대학교 공식 홈페이지(https://www.chosun.ac.kr)나 해당 학과 사무실로 문의해 주시기 바랍니다.", "rag", []),
         "sources": [],
-        "suggestions": suggestions_for_answer("rag", state),
-        "debug": search_result.debug if req.debug else None,
+        "suggestions": ["오늘 날짜 알려줘", "학사일정 확인하기"],
     }
 
 @app.exception_handler(Exception)

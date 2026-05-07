@@ -165,6 +165,20 @@
         "name": "성적 열람",
         "start_date": "2026-12-29",
         "end_date": "2026-12-31"
+      },
+      {
+        "key": "summer_vacation",
+        "aliases": ["여름방학", "하계방학", "하계 휴가"],
+        "name": "여름방학",
+        "start_date": "2026-06-22",
+        "end_date": "2026-08-31"
+      },
+      {
+        "key": "winter_vacation",
+        "aliases": ["겨울방학", "동계방학", "동계 휴가"],
+        "name": "겨울방학",
+        "start_date": "2026-12-22",
+        "end_date": "2027-02-28"
       }
     ]
   },
