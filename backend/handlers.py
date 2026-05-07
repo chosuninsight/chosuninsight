@@ -658,19 +658,10 @@ async def get_gpt_response(question: str, context: str, history: list[ChatHistor
         return f"답변 생성 중 오류가 발생했습니다: {e}"
 
 def basis_line_for_answer(answer_mode: str, sources: list[str]) -> str:
-    if answer_mode in {"clarifying_question", "current_date"}: return ""
-    if answer_mode == "official_web_search": return "기준: 공식 웹 검색 결과"
-    if answer_mode == "rag" and sources:
-        visible = list(dict.fromkeys([str(s) for s in sources if s]))[:2]
-        if visible: return f"참고: {', '.join(visible)}"
-    return f"기준: 조선대학교 공식 자료 ({answer_mode})"
+    return ""
 
 def append_basis_line(answer: str, answer_mode: str, sources: list[str]) -> str:
-    basis = basis_line_for_answer(answer_mode, sources)
-    if not basis or basis in answer: return answer
-    return f"{answer}\n\n{basis}"
+    return answer
 
 def suggestions_for_answer(answer_mode: str, state: ConversationState, suggestion_context: str = "") -> list[str]:
-    if answer_mode == "official_web_search": return ["출처 다시 보여줘", "총학생회 인스타 기준으로 찾아줘", "공식 공지도 찾아줘"]
-    if answer_mode == "rag": return ["관련 공지 더 찾아줘", "출처 알려줘", "신청기간 알려줘"]
-    return ["학사일정 알려줘", "장학금 공지 확인", "졸업요건 궁금해"]
+    return []

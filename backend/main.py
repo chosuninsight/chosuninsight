@@ -93,7 +93,7 @@ async def chat(req: ChatRequest):
         return {
             "success": True,
             "answer": append_basis_line(structured_answer.answer, structured_answer.answer_mode, structured_answer.sources),
-            "sources": structured_answer.sources,
+            "sources": [],
             "suggestions": suggestions_for_answer(structured_answer.answer_mode, state, structured_answer.suggestion_context),
             "debug": {"answer_mode": structured_answer.answer_mode, "interpretation": interpretation} if req.debug else None,
         }
@@ -107,7 +107,7 @@ async def chat(req: ChatRequest):
             return {
                 "success": True,
                 "answer": append_basis_line(web_answer.answer, web_answer.answer_mode, web_answer.sources),
-                "sources": web_answer.sources,
+                "sources": [],
                 "suggestions": suggestions_for_answer(web_answer.answer_mode, state, web_answer.suggestion_context),
             }
         
@@ -116,7 +116,7 @@ async def chat(req: ChatRequest):
             return {
                 "success": True,
                 "answer": append_basis_line(fallback_answer.answer, fallback_answer.answer_mode, fallback_answer.sources),
-                "sources": fallback_answer.sources,
+                "sources": [],
                 "suggestions": suggestions_for_answer(fallback_answer.answer_mode, state, fallback_answer.suggestion_context),
             }
 
@@ -135,8 +135,8 @@ async def chat(req: ChatRequest):
 
     return {
         "success": True,
-        "answer": append_basis_line(answer, "rag", [hit.source for hit in search_result.hits]),
-        "sources": [hit.source for hit in search_result.hits],
+        "answer": append_basis_line(answer, "rag", []),
+        "sources": [],
         "suggestions": suggestions_for_answer("rag", state),
         "debug": search_result.debug if req.debug else None,
     }

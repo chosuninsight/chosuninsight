@@ -12,5 +12,19 @@
     "mode": "official_web_search",
     "updated_at": "2026-05-07T17:19:00.511626+09:00",
     "expire_at": "2026-06-06T17:19:00.511640+09:00"
+  },
+  {
+    "question": "축제 언제야?",
+    "answer": "조선대학교의 GRACIA 축제는 2026년 5월 6일부터 5월 8일까지 진행됩니다. 이 축제는 조선대학교 학생들의 주도로 열리는 대표적인 행사로, 공연과 다양한 문화 프로그램이 포함되어 있어 캠퍼스와 지역 사회의 활력을 높이는 역할을 합니다. \n\n자세한 내용은 공식 웹사이트에서 확인하실 수 있습니다: [조선대학교 GRACIA 축제](https://csu.chosun.ac.kr/chosun/3091/subview.do)",
+    "sources": [
+      "https://csu.chosun.ac.kr/chosun/763/subview.do",
+      "https://csu.chosun.ac.kr/chosun/309/subview.do",
+      "https://p.chosun.ac.kr/",
+      "https://www.instagram.com/accounts/emailsignup/",
+      "https://www.instagram.com/accounts/login/?next=https%3A%2F%2Fwww.instagram.com%2Fp%2FDXoN56PiXKw%2F&is_from_rle"
+    ],
+    "mode": "official_web_search",
+    "updated_at": "2026-05-07T17:22:10.605122+09:00",
+    "expire_at": "2026-06-06T17:22:10.605138+09:00"
   }
 ]
