@@ -124,13 +124,27 @@ def save_web_discovery(question: str, answer: str, sources: list[str], mode: str
         data = json.loads(KNOWLEDGE_STORE_PATH.read_text(encoding="utf-8"))
         if any(item.get("question") == question for item in data[-100:]):
             return
+        
+        now = datetime.now(ZoneInfo("Asia/Seoul"))
+        # 시간 민감성 키워드 체크 (오늘, 내일, 어제, 현재, 지금, 축제 등)
+        temporal_keywords = ["오늘", "내일", "어제", "현재", "지금", "축제", "식단", "밥"]
+        is_temporal = any(k in question for k in temporal_keywords)
+        
+        # 기본 유효기간은 30일, 교수/학과는 180일, 시간 민감 질문은 2시간
+        if is_temporal:
+            delta = timedelta(hours=2)
+        elif "교수" in question or "학과" in question:
+            delta = timedelta(days=180)
+        else:
+            delta = timedelta(days=30)
+            
         new_entry = {
             "question": question,
             "answer": answer,
             "sources": sources,
             "mode": mode,
-            "updated_at": datetime.now(ZoneInfo("Asia/Seoul")).isoformat(),
-            "expire_at": (datetime.now(ZoneInfo("Asia/Seoul")) + timedelta(days=180 if "교수" in question or "학과" in question else 30)).isoformat()
+            "updated_at": now.isoformat(),
+            "expire_at": (now + delta).isoformat()
         }
         data.append(new_entry)
         if len(data) > 1000:

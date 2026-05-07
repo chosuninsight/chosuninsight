@@ -85,9 +85,26 @@ async def chat(req: ChatRequest):
     interpretation = await interpret_chat_request(req.question, history)
     state = build_conversation_state(req.question, history, interpretation)
     
-    # 2. 구조화된 도메인 답변 (학사일정, 교수진, 졸업요건, 식단 등)
+    # 2. 피드백/정정 처리 (Feedback Loop)
+    if interpretation.get("is_feedback"):
+        answer = await get_gpt_response(req.question, "", history, interpretation)
+        if CHAT_MEMORY_ENABLED:
+            conversation_memory.update(req.session_id, req.question, interpretation, state)
+        return {
+            "success": True,
+            "answer": append_basis_line(answer, "rag", []),
+            "sources": [],
+            "suggestions": ["미안해, 다시 알려줘", "학사일정 확인"],
+        }
+
+    # 3. 실시간성 판단 (LLM 의도 기반)
+    # 이제 키워드 리스트 대신 LLM이 판단한 is_realtime_required 플래그를 사용합니다.
+    is_realtime_query = interpretation.get("is_realtime_required", False)
+    search_query = interpretation.get("standalone_question") or req.question
+
+    # 4. 구조화된 도메인 답변 (학사일정, 교수진, 졸업요건, 식단 등)
     structured_answer = build_structured_domain_answer(req.question, history, state, interpretation)
-    if structured_answer:
+    if structured_answer and not is_realtime_query:
         if CHAT_MEMORY_ENABLED:
             conversation_memory.update(req.session_id, req.question, interpretation, state)
         return {
@@ -98,29 +115,25 @@ async def chat(req: ChatRequest):
             "debug": {"answer_mode": structured_answer.answer_mode, "interpretation": interpretation} if req.debug else None,
         }
 
-    # 3. 일반 RAG 검색 수행
-    search_query = interpretation.get("standalone_question") or req.question
-    search_result = search_docs(search_query)
-    
-    # RAG 결과가 있는 경우 답변 생성
-    if search_result.hits:
-        context = "\n".join(hit.content for hit in search_result.hits)
-        answer = await get_gpt_response(req.question, context, history, interpretation)
-        
-        # LLM이 '정보 없음' 취지의 답변을 했는지 검사
-        negative_patterns = ["정보를 찾지 못했습니다", "관련 자료가 없습니다", "알 수 없습니다", "확인할 수 없습니다"]
-        if not any(p in answer for p in negative_patterns):
-            if CHAT_MEMORY_ENABLED:
-                conversation_memory.update(req.session_id, req.question, interpretation, state)
-            return {
-                "success": True,
-                "answer": append_basis_line(answer, "rag", []),
-                "sources": [],
-                "suggestions": suggestions_for_answer("rag", state),
-            }
+    # 5. 일반 RAG 검색 수행 (실시간 질문이 아닐 때만 우선 시도)
+    if not is_realtime_query:
+        search_result = search_docs(search_query)
+        if search_result.hits:
+            context = "\n".join(hit.content for hit in search_result.hits)
+            answer = await get_gpt_response(req.question, context, history, interpretation)
+            
+            negative_patterns = ["정보를 찾지 못했습니다", "관련 자료가 없습니다", "알 수 없습니다", "확인할 수 없습니다"]
+            if not any(p in answer for p in negative_patterns):
+                if CHAT_MEMORY_ENABLED:
+                    conversation_memory.update(req.session_id, req.question, interpretation, state)
+                return {
+                    "success": True,
+                    "answer": append_basis_line(answer, "rag", []),
+                    "sources": [],
+                    "suggestions": suggestions_for_answer("rag", state),
+                }
 
-    # 4. 최종 Fallback: 실시간 웹 검색 (Jina AI)
-    # RAG에서 답을 못 찾았거나, LLM이 답을 못 한다고 한 경우 실행
+    # 6. 실시간 질문이거나 RAG에서 답을 못 찾은 경우 -> 웹 검색 (Jina AI)
     web_answer = await build_official_web_search_answer_direct(req.question, history, interpretation)
     if web_answer:
         if CHAT_MEMORY_ENABLED:

@@ -508,23 +508,28 @@ def build_graduation_credit_progress_answer(question: str, history: list[ChatHis
 # --- Main Entry Handlers ---
 async def interpret_chat_request(question: str, history: list[ChatHistoryMessage]) -> dict[str, Any]:
     history_text = format_chat_history(history, max_messages=8, max_chars=1800)
-    system_prompt = """너는 조선대학교 챗봇의 대화 이해기야. 사용자의 현재 질문과 이전 대화를 보고 JSON만 반환해.
-규칙:
-- standalone_question: 이전 대화 맥락을 포함해 완성된 질문 (예: "그거 언제야?" -> "장학금 신청 기간 언제야?")
-- department: 질문에서 언급된 학과/전공 (예: "컴공" -> "컴퓨터공학과")
-- topic: 대화의 핵심 주제 (예: "scholarship", "graduation_credits", "faculty", "academic_calendar")
-- intent: 사용자의 의도 (예: "lookup", "apply", "contact")
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
+    current_date_str = now.strftime("%Y-%m-%d %A")
+    
+    system_prompt = f"""너는 조선대학교 챗봇의 대화 이해기야. [현재 시각: {current_date_str}]
+사용자의 질문 의도를 분석하여 검색 최적화 파라미터를 JSON으로 반환해.
+
+필드:
+- standalone_question: 문맥이 포함된 완성된 질문
+- optimized_search_query: 답변을 위해 가장 필요한 구체적 정보(이름, 날짜, 장소 등)를 포함한 검색어 (예: "축제 누구와?" -> "2026 조선대학교 축제 라인업 출연진 명단")
+- is_feedback: 정정/피드백 여부 (true/false)
+- topic: 핵심 주제
+- is_realtime_required: 실시간 웹 검색이 필요한 시급한 정보인가? (true/false)
 """.strip()
     user_prompt = f"[이전 대화]\n{history_text or '이전 대화 없음'}\n\n[현재 질문]\n{question}"
     try:
         response = await client.chat.completions.create(
-            model=CHAT_MODEL_NAME, 
-            response_format={"type": "json_object"}, 
+            model=CHAT_MODEL_NAME,
+            response_format={"type": "json_object"},
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
         )
         return json.loads(response.choices[0].message.content or "{}")
     except: return {}
-
 def build_query_frame(question: str, history: list[ChatHistoryMessage], interpretation: dict[str, Any] | None = None) -> QueryFrame:
     combined_text = conversation_text(question, history)
     entity = find_entity(combined_text)
@@ -701,12 +706,11 @@ async def build_official_web_search_answer_direct(
     cached = find_in_web_knowledge(question)
     if cached: return cached
 
-    # 2. 검색어 보강
-    standalone_question = (interpretation or {}).get("standalone_question") or question
-    if standalone_question.startswith("조선대학교"):
-        search_query = standalone_question
-    else:
-        search_query = f"조선대학교 {standalone_question}"
+    # 2. 검색어 결정 (LLM이 생성한 최적화된 검색어 우선)
+    search_query = (interpretation or {}).get("optimized_search_query")
+    if not search_query:
+        standalone = (interpretation or {}).get("standalone_question") or question
+        search_query = standalone if standalone.startswith("조선대학교") else f"조선대학교 {standalone}"
 
     # 3. Jina AI 검색
     jina = JinaSearchTool(api_key=JINA_API_KEY, max_results=WEB_SEARCH_MAX_RESULTS)
@@ -714,16 +718,20 @@ async def build_official_web_search_answer_direct(
 
     if "검색 결과가 없습니다" in search_results_text: return None
 
-    # 4. GPT 요약
+    # 4. GPT 요약 (범용적 구체화 지침)
     now = datetime.now(ZoneInfo("Asia/Seoul"))
-    system_prompt = f"""너는 조선대학교 정보 도우미야. 제공된 웹 검색 결과를 바탕으로 사용자의 질문에 답변해.
-[오늘 날짜] {now.year}-{now.month:02d}-{now.day:02d}
+    system_prompt = f"""너는 조선대학교 정보 도우미야. 제공된 웹 검색 결과를 바탕으로 답변해.
+[현재 날짜: {now.strftime("%Y-%m-%d")}]
 
 지침:
-- 검색 결과에서 공식 SNS(인스타그램 등)나 공식 홈페이지 정보를 우선적으로 반영해.
-- 답변에서 '*' 문자를 절대 사용하지 마.
-- 확인된 출처 URL을 반드시 포함해.
-- 모르는 내용은 지어내지 말고 "공식 홈페이지를 확인해 주세요"라고 안내해.
+1. 정보 우선순위: 사용자가 궁금해할 구체적인 정보(이름, 날짜, 장소, 금액, 전화번호 등)를 최우선으로 찾아서 명시해.
+2. 정확성: 검색 결과에 여러 날짜나 정보가 섞여 있다면 현재 날짜와 가장 가까운 최신 정보를 선택해.
+3. 타 대학 배제: 조선대학교와 관련 없는 정보는 과감히 제외해.
+4. 포맷: 
+   - 문장 앞에 '-', '•', '*' 등 어떠한 기호도 쓰지 마. 
+   - 줄바꿈으로만 정보를 구분해.
+   - 볼드체(**)와 이모지를 절대 사용하지 마.
+5. 금지사항: 답변 본문에 어떠한 출처 URL, 링크, "[공식 홈페이지]" 등 웹사이트 연결을 유도하는 텍스트를 절대 포함하지 마.
 """
     user_prompt = f"질문: {question}\n\n검색 결과:\n{search_results_text}"
 
@@ -752,23 +760,26 @@ def build_entity_official_fallback_answer(question: str, history: list[ChatHisto
     if frame.intent not in {"where_to_apply", "how_to_apply", "when_is", "general_lookup"}: return None
 
     lines = [f"{entity_with_topic_particle(frame.entity)} 공식 자료 확인이 필요한 항목입니다."]
-    if official_route: lines.append(f"확인 경로: {official_route}")
     lines.append(str(fallback))
-    return StructuredAnswer(answer="\n".join(lines), sources=[entity_config.get("source") or "https://www3.chosun.ac.kr"], answer_mode="official_fallback")
+    return StructuredAnswer(answer="\n".join(lines), sources=[], answer_mode="official_fallback")
 
 async def get_gpt_response(question: str, context: str, history: list[ChatHistoryMessage], interpretation: dict[str, Any] | None = None) -> str:
     now = datetime.now(ZoneInfo("Asia/Seoul"))
-    system_prompt = f"""너는 조선대학교 정보 도우미야. 제공된 [참고 정보]를 바탕으로 사용자의 질문에 답변해.
-[오늘 날짜] {now.year}-{now.month:02d}-{now.day:02d}
+    current_date_str = now.strftime("%Y-%m-%d %A")
+    
+    is_feedback = interpretation.get("is_feedback") if interpretation else False
+    
+    system_prompt = f"""너는 조선대학교 정보 도우미야. [현재 시점 기준정보: {current_date_str}]
 
-목표: 학생이 실제로 행동할 수 있도록 확인된 정보만 간결하게 안내해.
-지침:
-- 답변은 항상 간결하고 명확하게 작성해.
-- 문장 앞에 '-', '•', '*' 등 어떠한 리스트 기호도 사용하지 마.
-- 정보가 여러 개인 경우 기호 없이 줄바꿈으로만 구분해.
-- 문장 끝에 이모지를 절대 사용하지 마.
-- '*' 문자를 사용한 강조(볼드체)를 하지 마.
-- 모르는 정보는 지어내지 말고 "관련 정보를 찾지 못했습니다"라고 답변해.
+중요 지침:
+1. 시간 계산: '오늘'은 {now.strftime("%m월 %d일")}이고, '내일'은 {(now + timedelta(days=1)).strftime("%m월 %d일")}이야. 이 기준을 절대 어기지 마.
+2. 날짜별 정보 정밀 매칭: 축제/공연 답변 시, 전체 명단을 단순히 나열하지 마. 검색 결과에서 사용자가 물어본 '특정 날짜'와 매칭되는 아티스트 이름만 정확히 골라내. (예: "내일 누구 와?"라고 물으면 "내일(5월 8일)은 A, B가 옵니다"라고 답해야 함)
+3. 정보 부재 시: 만약 검색 결과에 날짜별 구분이 명확하지 않다면, "전체 라인업은 공개되었으나 날짜별 세부 일정은 확인 중입니다"라고 정직하게 말해. 엉뚱한 날짜 가수를 섞지 마.
+4. 피드백 대응: 사용자가 정보를 정정하면 사용자의 말과 [현재 시점 기준정보]를 100% 우선해. 사과 후 올바른 정보를 안내해.
+5. 포맷팅 및 금지사항: 
+   - 문장 앞에 어떠한 기호('-', '•', '*')도 쓰지 마. 줄바꿈으로만 구분해.
+   - 볼드체(**)와 이모지를 절대 사용하지 마.
+   - 답변 본문에 출처 URL, 'Source:', '출처:', 'http' 등을 포함하는 모든 텍스트를 절대 포함하지 마. 오직 정보 본문만 간결하게 작성해.
 """
 
     history_text = format_chat_history(history, max_messages=5)
@@ -778,7 +789,10 @@ async def get_gpt_response(question: str, context: str, history: list[ChatHistor
             model=CHAT_MODEL_NAME,
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
         )
-        return response.choices[0].message.content.replace("*", "").strip()
+        content = response.choices[0].message.content.replace("*", "").strip()
+        # 출처 관련 문구 및 URL을 강제로 제거하는 후처리 (대소문자 무관)
+        content = re.split(r"(출처|source|url|http|https)[\s:]*", content, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+        return content
     except Exception as e:
         return f"답변 생성 중 오류가 발생했습니다: {e}"
 
@@ -786,21 +800,8 @@ def basis_line_for_answer(answer_mode: str, sources: list[str]) -> str:
     return ""
 
 def append_basis_line(answer: str, answer_mode: str, sources: list[str]) -> str:
-    """모든 답변에 대해 일관된 포맷팅을 적용합니다 (기호 완전 제거)."""
-    # 1. 제목 맵핑
-    title_map = {
-        "cafeteria": "식단 정보 안내",
-        "faculty_profile": "교수진 정보 상세",
-        "academic_calendar_2026": "학사일정 주요 안내",
-        "graduation_credit_progress": "졸업 이수학점 자가진단",
-        "student_support_portal": "학생지원 포털 접속 안내",
-        "official_web_search": "최신 웹 검색 결과",
-        "official_fallback": "공식 안내 채널 안내",
-        "rag": "관련 규정/지침 안내",
-        "current_date": "현재 날짜 정보"
-    }
-    
-    # 2. 전처리: 불필요한 특수문자 제거 및 줄바꿈 정리
+    """모든 답변에 대해 일관된 포맷팅을 적용합니다 (기호 완전 제거, 타이틀 제거)."""
+    # 1. 전처리: 불필요한 특수문자 제거 및 줄바꿈 정리
     clean_answer = answer.replace("*", "").strip()
     
     # 모든 리스트 기호(-, •, *, ㆍ) 제거
@@ -819,32 +820,9 @@ def append_basis_line(answer: str, answer_mode: str, sources: list[str]) -> str:
         formatted_lines.append(line)
     
     clean_answer = "\n".join(formatted_lines).strip()
-    
-    # 3. 제목 추가 (이미 제목 형태의 첫 줄이 있다면 생략)
-    title = title_map.get(answer_mode)
-    if title:
-        first_line = clean_answer.split("\n")[0]
-        if not (first_line.startswith("[") and first_line.endswith("]")):
-            clean_answer = f"[{title}]\n\n{clean_answer}"
             
     return clean_answer
 
 def suggestions_for_answer(answer_mode: str, state: ConversationState, suggestion_context: str = "") -> list[str]:
-    """답변 모드와 상태에 맞는 추천 질문을 생성합니다."""
-    suggestions = []
-    
-    if answer_mode == "cafeteria":
-        suggestions = ["내일 식단은 뭐야?", "기숙사 식당 위치 알려줘", "학식 가격은 얼마야?"]
-    elif answer_mode == "faculty_profile":
-        suggestions = [f"{state.department or '학과'} 사무실 번호는?", "다른 교수님 더 보기", "수강신청 일정 알려줘"]
-    elif answer_mode == "graduation_credit_progress":
-        suggestions = ["교양은 몇 학점 더 들어야 해?", "졸업 논문 요건은 뭐야?", "마일리지 확인하는 법"]
-    elif answer_mode == "academic_calendar_2026":
-        suggestions = ["여름방학 언제 시작해?", "성적 조회 기간은?", "수강신청 바로가기"]
-    elif answer_mode == "rag":
-        if "장학" in state.topic or "장학" in state.standalone_question:
-            suggestions = ["신청 가능한 장학금 목록", "국가장학금 신청 기간", "성적 장학금 기준"]
-        else:
-            suggestions = ["더 자세한 공지사항 보기", "관련 메뉴 바로가기", "오늘 날짜 알려줘"]
-            
-    return suggestions[:3]
+    """모든 추천 질문(버튼)을 비활성화합니다."""
+    return []
