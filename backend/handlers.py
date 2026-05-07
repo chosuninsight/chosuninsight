@@ -622,7 +622,7 @@ async def build_official_web_search_answer_direct(
 
         return StructuredAnswer(answer=answer, sources=sources, answer_mode="official_web_search")
     except Exception as e:
-        print(f"⚠️ 웹 검색 요약 실패: {e}")
+        print(f"Warning: 웹 검색 요약 실패: {e}")
         return None
 
 def build_entity_official_fallback_answer(question: str, history: list[ChatHistoryMessage]) -> StructuredAnswer | None:

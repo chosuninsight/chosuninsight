@@ -24,7 +24,7 @@ class WebSearchCache:
                 with open(self.cache_file, "r", encoding="utf-8") as f:
                     self.data = json.load(f)
             except Exception as e:
-                print(f"⚠️ 캐시 로드 실패: {e}")
+                print(f"Warning: 캐시 로드 실패: {e}")
                 self.data = {}
 
     def _save(self):
@@ -33,7 +33,7 @@ class WebSearchCache:
             with open(self.cache_file, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"⚠️ 캐시 저장 실패: {e}")
+            print(f"Warning: 캐시 저장 실패: {e}")
 
     def get(self, query: str) -> Optional[Dict[str, Any]]:
         query_hash = hashlib.md5(query.strip().lower().encode("utf-8")).hexdigest()
@@ -74,7 +74,7 @@ class JinaSearchTool:
     def run(self, query: str) -> str:
         cached_result = web_search_cache.get(query)
         if cached_result:
-            print(f"📡 [Cache Hit] Query: {query}")
+            print(f"Log: [Cache Hit] Query: {query}")
             return cached_result["formatted_text"]
 
         url = f"{self.base_url}{requests.utils.quote(query)}"
@@ -86,7 +86,7 @@ class JinaSearchTool:
             headers["Authorization"] = f"Bearer {self.api_key}"
         
         try:
-            print(f"📡 [Jina API Call] Query: {query}")
+            print(f"Log: [Jina API Call] Query: {query}")
             response = requests.get(url, headers=headers, timeout=30)
             response.raise_for_status()
             data = response.json()

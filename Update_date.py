@@ -28,7 +28,7 @@ DATA_SAVE_DIR = "/app/chosun_rag_data"
 # 2. 갱신 데이터 '전용' 크로마 DB 경로 (기존 DB와 완전히 분리됨)
 UPDATE_DB_DIR = "/root/chroma_db_update" # DB는 root로 우회
 UPDATE_COLLECTION_NAME = "chosun_daily_update"
-# ✅ /root/tmp 폴더를 생성하고 그 안에 플래그 파일을 둡니다.
+# Success: /root/tmp 폴더를 생성하고 그 안에 플래그 파일을 둡니다.
 TMP_DIR = "/root/tmp"
 FLAG_FILE_PATH = os.path.join(TMP_DIR, "update_complete.flag")
 
@@ -91,13 +91,13 @@ def crawl_extracurricular_data():
             if page < 3: 
                 driver.find_element(By.LINK_TEXT, str(page + 1)).click()
                 time.sleep(3) 
-    except Exception as e: print(f"❌ 비교과 에러: {e}")
+    except Exception as e: print(f"Error: 비교과 에러: {e}")
     finally:
         driver.quit()
         if collected_data:
             with open(os.path.join(DATA_SAVE_DIR, "비교과데이터_최신.txt"), "w", encoding="utf-8") as f:
                 f.write("\n---\n".join(collected_data))
-            print(f"  ✅ 비교과 수집 완료 ({len(collected_data)}건)")
+            print(f"  Success: 비교과 수집 완료 ({len(collected_data)}건)")
 
 def crawl_academic_notices():
     base_url = "https://www4.chosun.ac.kr/acguide/9326/subview.do"
@@ -128,12 +128,12 @@ def crawl_academic_notices():
 
                 collected_data.append(f"분류: 학사공지\n제목: {title}\n날짜: {date_tag.text.strip()}\n내용:\n{content_text}")
                 time.sleep(0.5)
-    except Exception as e: print(f"❌ 학사공지 에러: {e}")
+    except Exception as e: print(f"Error: 학사공지 에러: {e}")
     finally:
         if collected_data:
             with open(os.path.join(DATA_SAVE_DIR, "학사공지_2026.txt"), "w", encoding="utf-8") as f:
                 f.write("\n---\n".join(collected_data))
-            print(f"  ✅ 학사공지 수집 완료 ({len(collected_data)}건)")
+            print(f"  Success: 학사공지 수집 완료 ({len(collected_data)}건)")
 
 def crawl_general_notices():
     base_url = "https://www3.chosun.ac.kr/chosun/217/subview.do"
@@ -164,12 +164,12 @@ def crawl_general_notices():
 
                 collected_data.append(f"분류: 교내일반공지\n제목: {title}\n날짜: {date_tag.text.strip()}\n내용:\n{content_text}")
                 time.sleep(0.5)
-    except Exception as e: print(f"❌ 교내일반공지 에러: {e}")
+    except Exception as e: print(f"Error: 교내일반공지 에러: {e}")
     finally:
         if collected_data:
             with open(os.path.join(DATA_SAVE_DIR, "교내일반공지_2026.txt"), "w", encoding="utf-8") as f:
                 f.write("\n---\n".join(collected_data))
-            print(f"  ✅ 교내일반공지 수집 완료 ({len(collected_data)}건)")
+            print(f"  Success: 교내일반공지 수집 완료 ({len(collected_data)}건)")
 
 def crawl_external_notices():
     base_url = "https://www3.chosun.ac.kr/chosun/2500/subview.do"
@@ -200,12 +200,12 @@ def crawl_external_notices():
 
                 collected_data.append(f"분류: 외부기관공고\n제목: {title}\n날짜: {date_tag.text.strip()}\n내용:\n{content_text}")
                 time.sleep(0.5)
-    except Exception as e: print(f"❌ 외부기관공고 에러: {e}")
+    except Exception as e: print(f"Error: 외부기관공고 에러: {e}")
     finally:
         if collected_data:
             with open(os.path.join(DATA_SAVE_DIR, "외부기관공고_2026.txt"), "w", encoding="utf-8") as f:
                 f.write("\n---\n".join(collected_data))
-            print(f"  ✅ 외부기관공고 수집 완료 ({len(collected_data)}건)")
+            print(f"  Success: 외부기관공고 수집 완료 ({len(collected_data)}건)")
 
 def crawl_active_scholarships_with_selenium():
     url = "https://scho.chosun.ac.kr/scho/2138/subview.do"
@@ -247,13 +247,13 @@ def crawl_active_scholarships_with_selenium():
                     driver.find_element(By.LINK_TEXT, str(page + 1)).click()
                     time.sleep(3) 
                 except: break
-    except Exception as e: print(f"❌ 장학안내 에러: {e}")
+    except Exception as e: print(f"Error: 장학안내 에러: {e}")
     finally:
         driver.quit() 
         if collected_data:
             with open(os.path.join(DATA_SAVE_DIR, "지금_신청_가능한_장학금.txt"), "w", encoding="utf-8") as f:
                 f.write("\n---\n".join(collected_data))
-            print(f"  ✅ 장학안내 수집 완료 ({len(collected_data)}건)")
+            print(f"  Success: 장학안내 수집 완료 ({len(collected_data)}건)")
 
 def crawl_cafeteria_menus():
     target_menus = {
@@ -286,12 +286,12 @@ def crawl_cafeteria_menus():
                     text = content_tag.get_text(separator='\n', strip=True)
                     collected_data.append(f"분류: 식단안내\n식당명: {name}\n수집일시: {now}\n내용:\n{text}")
             time.sleep(1)
-        except Exception as e: print(f"❌ {name} 에러: {e}")
+        except Exception as e: print(f"Error: {name} 에러: {e}")
 
     if collected_data:
         with open(os.path.join(DATA_SAVE_DIR, "조선대학교_식단.txt"), "w", encoding="utf-8") as f:
             f.write("\n---\n".join(collected_data))
-        print(f"  ✅ 식단표 수집 완료 ({len(collected_data)}개 식당)")
+        print(f"  Success: 식단표 수집 완료 ({len(collected_data)}개 식당)")
 
 # =====================================================================
 # 🧠 [수정됨] 갱신 데이터 전용 DB 완전 초기화 및 생성 함수
@@ -331,7 +331,7 @@ def update_daily_chroma_db():
         # 3. 새 DB에 오늘 수집한 데이터 통째로 밀어넣기
         if all_documents:
             add_documents_in_batches(vectorstore, all_documents)
-            print(f"  ✨ 전용 DB 생성 완료! (총 {len(all_documents)}개 청크 이식됨)")
+            print(f"  Success: 전용 DB 생성 완료! (총 {len(all_documents)}개 청크 이식됨)")
 
         # 4. 임시 DB 생성이 성공한 뒤에만 운영 DB 폴더를 교체한다.
         print(f"  🗑️ {UPDATE_DB_DIR} 내부의 기존 데이터를 삭제합니다.")
@@ -345,7 +345,7 @@ def update_daily_chroma_db():
         print("="*60 + "\n")
         
     except Exception as e:
-        print(f"\n❌ 전용 DB 업데이트 중 오류 발생: {e}")
+        print(f"\nError: 전용 DB 업데이트 중 오류 발생: {e}")
     finally:
         shutil.rmtree(temp_update_dir, ignore_errors=True)
 
@@ -354,7 +354,7 @@ def update_daily_chroma_db():
 # =====================================================================
 def run_pipeline():
     print("\n" + "="*60)
-    print(f"🤖 [자동 파이프라인 가동] 현재 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Info: [자동 파이프라인 가동] 현재 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*60)
     
     # 1. 데이터 수집 (바탕화면 폴더에 파일 저장)
@@ -368,15 +368,15 @@ def run_pipeline():
     # 2. 갱신 전용 DB 초기화 및 생성
     update_daily_chroma_db()
     
-    # ✅ [최종] /app/update_complete.flag 생성
+    # Success: [최종] /app/update_complete.flag 생성
     try:
         with open(FLAG_FILE_PATH, "w", encoding="utf-8") as f:
             f.write(f"done_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
         print(f"🚩 [시그널] 플래그 파일 생성 완료: {FLAG_FILE_PATH}")
     except Exception as e:
-        print(f"❌ 플래그 생성 실패: {e}")
+        print(f"Error: 플래그 생성 실패: {e}")
     
-    print("🎉 [파이프라인 완료] 오늘의 교내 데이터 수집 및 전용 DB 갱신이 끝났습니다.")
+    print("Success: [파이프라인 완료] 오늘의 교내 데이터 수집 및 전용 DB 갱신이 끝났습니다.")
 
 if __name__ == "__main__":
     # 프로그램을 켜자마자 즉시 1회 전체 파이프라인 실행

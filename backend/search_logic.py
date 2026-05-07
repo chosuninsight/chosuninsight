@@ -60,7 +60,7 @@ def run_vector_search(vectorstore: Chroma, store_name: str, query: str, k: int) 
     try:
         results = vectorstore.similarity_search_with_score(query, k=k)
     except Exception as exc:
-        print(f"⚠️ {store_name} 벡터 검색 건너뜀: {exc}")
+        print(f"Warning: {store_name} 벡터 검색 건너뜀: {exc}")
         return []
     ranked_keys = []
     for doc, _score in results:
