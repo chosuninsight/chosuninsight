@@ -166,5 +166,33 @@
     "mode": "official_web_search",
     "updated_at": "2026-05-09T15:27:31.287574+09:00",
     "expire_at": "2026-05-09T17:27:31.287574+09:00"
+  },
+  {
+    "question": "2학기 중간고사 언제야?",
+    "answer": "2026학년도 2학기 중간고사 일정은 다음과 같습니다:\n\n- 2026년 10월 13일(화) ~ 10월 19일(월)\n\n이 기간 동안 중간고사가 진행되니, 필요한 준비를 미리 하시길 바랍니다. 추가 질문이 있다면 언제든지 물어보세요!",
+    "sources": [
+      "https://support.scribd.com/hc/en-us/articles/210129326-General-Terms-of-Use",
+      "https://www.scribd.com/document/1012829040/2026i-e-e-i-i-i-i",
+      "https://info21.khu.ac.kr/com/LoginCtr/login.do?sso=ok",
+      "https://www.scribd.com/document/949083327/2025%ED%95%99%EB%85%84%EB%8F%84-%ED%95%99%EC%82%AC%EC%9D%BC%EC%A0%95-2025-6-18",
+      "https://www.scribd.com/document/820238493/%EC%A7%80%EC%82%B0%EC%A4%91-%E1%84%92%E1%85%A1%E1%86%A8%E1%84%89%E1%85%A1%E1%84%8B%E1%85%B5%E1%86%AF%E1%84%8C%E1%85%A5%E1%86%BC"
+    ],
+    "mode": "official_web_search",
+    "updated_at": "2026-05-09T16:17:59.475940+09:00",
+    "expire_at": "2026-06-08T16:17:59.475940+09:00"
+  },
+  {
+    "question": "2학기 수강신청 언제야?",
+    "answer": "2026학년도 2학기 수강신청 일정은 다음과 같습니다:\n\n- 2학기 수강신청 기간: 2026년 8월 24일(월)부터 8월 28일(금)까지\n  - 신입생 및 편입생 (외국인 특별전형 포함) 수강신청: 2026년 8월 24일(월) ~ 8월 25일(화)\n\n이 외에도 수강 과목 확인 및 변경은 9월 1일(화)부터 9월 7일(월)까지 진행됩니다. 학사 일정에 유의하여 준비하시기 바랍니다!",
+    "sources": [
+      "https://www.sogang.ac.kr/ko/guide#special",
+      "https://www.ewha.ac.kr/ewha/academics/gsti.do",
+      "https://www.sogang.ac.kr/ko/menu-edu-support",
+      "https://registrar.korea.ac.kr/eduinfo/enrollment/divided.do",
+      "https://registrar.korea.ac.kr/eduinfo/info/grade_missed.do"
+    ],
+    "mode": "official_web_search",
+    "updated_at": "2026-05-09T16:18:25.730732+09:00",
+    "expire_at": "2026-06-08T16:18:25.730732+09:00"
   }
 ]

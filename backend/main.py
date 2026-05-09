@@ -108,9 +108,12 @@ async def chat(req: ChatRequest):
             answer_mode = "rag"
             sources = [hit.source for hit in search_result.hits]
 
-    # 3. Web Search Fallback (if context is still empty or explicitly requested)
+    # 3. Web Search Fallback
     is_realtime_query = interpretation.get("is_realtime_required", False)
-    if not context_text or is_realtime_query or state.domain_intent == "web_search":
+    # Priority: Structured > Web Search (if realtime/missing) > RAG
+    # We only call Web Search if context is empty, OR domain is explicitly web_search,
+    # OR it's a realtime query that hasn't found a structured/official answer yet.
+    if not context_text or state.domain_intent == "web_search" or (is_realtime_query and answer_mode == "rag"):
         web_answer = await build_official_web_search_answer_direct(req.question, history, interpretation)
         if web_answer:
             context_text = web_answer.answer
@@ -119,13 +122,13 @@ async def chat(req: ChatRequest):
             suggestion_context = web_answer.suggestion_context
 
     # 4. Final Generation using LLM (Natural Language synthesis)
-    # Exceptions: current_date, clarifying_question should remain structured/direct
-    if answer_mode in ["current_date", "clarifying_question"]:
+    # Exceptions: current_date, clarifying_question, official_fallback should remain structured/direct
+    if answer_mode in ["current_date", "clarifying_question", "official_fallback"]:
         final_answer = context_text
     else:
         final_answer = await get_gpt_response(req.question, context_text, history, interpretation)
     
-    # Validation for empty responses
+    # Validation for empty responses or low-quality RAG
     if not final_answer or "정보를 찾지 못했습니다" in final_answer:
         fallback_answer = build_entity_official_fallback_answer(req.question, history)
         if fallback_answer:
@@ -134,7 +137,7 @@ async def chat(req: ChatRequest):
 
     # Final cleanup and memory update
     if not final_answer:
-        final_answer = "현재 관련 정보를 찾기 어렵습니다. 공식 홈페이지(https://www.chosun.ac.kr)를 확인해 주시기 바랍니다."
+        final_answer = "현재 관련 정보를 찾기 어렵습니다. 조선대학교 공식 홈페이지(https://www.chosun.ac.kr)를 확인해 주시기 바랍니다."
 
     if CHAT_MEMORY_ENABLED:
         conversation_memory.update(req.session_id, req.question, interpretation, state)

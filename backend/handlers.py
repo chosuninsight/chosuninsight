@@ -546,37 +546,25 @@ async def interpret_chat_request(question: str, history: list[ChatHistoryMessage
     current_date_str = now.strftime("%Y-%m-%d %A")
 
     system_prompt = f"""너는 조선대학교 챗봇의 대화 이해기야. [현재 시각: {current_date_str}]
-사용자의 질문 의도를 분석하여 검색 및 처리 최적화 파라미터를 JSON으로 반환해.
+사용자의 질문 의도를 분석하여 반드시 지정된 도메인 중 하나로 분류해 JSON으로 반환해.
 
-도메인 가이드:
-- clarifying_question: [최우선] 학과나 학번 등 답변에 필수적인 정보가 누락되어 질문자에게 구체적으로 되물어야 할 때 (예: "졸업요건 알려줘" -> 어느 학과인지 물어봐야 함)
-- official_fallback: 축제 일정, 연예인 라인업 등 매년 변하여 공식 홈페이지 확인이 필수적인 항목일 때
-- academic_calendar: 학사일정, 시험기간, 수강신청 기간 등 날짜 관련
-- faculty: 교수님 성함, 연구실, 연락처, 전공분야 조회
-- cafeteria: 학식 메뉴, 식당 정보
-- student_support_portal: THE조아, 수강신청 시스템 등 사이트 접속 경로 및 방법
-- graduation_policy: 학과별 졸업 이수학점, 졸업요건
-- general_education: 학번별 교양 교육과정 이수 요건
-- academic_administration: 휴학, 복학, 장학금 종류, 학점교류, 졸업유예 등 학사 행정 절차
-- current_date: 오늘 날짜, 요일
-- web_search: 최신 뉴스, 실시간 공지 등 동적 정보 (RAG에 없는 경우)
-- rag: 기타 일반적인 학사 규정, 도서관 이용 등 정적 정보
-
-예시:
-- "졸업요건 알려줘" -> {{"domain": "clarifying_question", "clarification_text": "어느 학과의 졸업요건을 찾으시나요? 예: 2023학번 컴퓨터공학과 졸업요건"}}
-- "교수님 연락처 알려줘" -> {{"domain": "clarifying_question", "clarification_text": "어느 학과 교수님을 찾으시나요? 예: 컴퓨터공학과 교수진"}}
-- "축제 언제야?" -> {{"domain": "official_fallback"}}
-- "오늘 며칠이야?" -> {{"domain": "current_date"}}
+도메인 결정 규칙 (엄격 준수):
+1. 학과/학번 정보가 필요한데 누락된 경우 -> 'clarifying_question' (최우선)
+   - 예: "졸업학점 알려줘", "이수체계 뭐야", "교수님 전화번호"
+2. 'THE조아', '수강신청', '종합정보', '포털' 등 특정 시스템 접속 방법을 묻는 경우 -> 'student_support_portal'
+3. '축제', '가수', '라인업', '대동제' 등 매년 바뀌는 공식 정보를 묻는 경우 -> 'official_fallback'
+4. 구체적인 날짜나 시험, 개강, 종강 등 학사 일정을 묻는 경우 -> 'academic_calendar'
+5. 학과 정보와 함께 교수님 정보를 묻는 경우 -> 'faculty'
+6. 휴학, 복학, 장학금 종류, 학점교류, 졸업유예 절차를 묻는 경우 -> 'academic_administration'
+7. 학과/학번 정보와 함께 졸업학점이나 교양 이수를 묻는 경우 -> 'graduation_policy' 또는 'general_education'
+8. 위 사항에 해당하지 않는 일반적인 질문 -> 'rag'
 
 필드:
-- standalone_question: 문맥이 포함된 완성된 질문
-- optimized_search_query: 검색에 최적화된 구체적 검색어
-- is_feedback: 질문의 정정/피드백 여부 (true/false)
-- topic: 질문의 핵심 주제
-- domain: 위 가이드 중 하나 선택
-- clarification_text: domain이 "clarifying_question"일 때 보낼 메시지
-- slots: 추출된 정보 {{"department": "...", "cohort_year": 2023, ...}}
-- is_realtime_required: 실시간 웹 검색이 필수적인 최신 정보인가?
+- standalone_question: 문맥 포함 완성 질문
+- domain: 위의 도메인 명칭 중 하나 (문자열)
+- clarification_text: domain이 'clarifying_question'일 때 사용자에게 되물을 구체적인 질문
+- slots: {{"department": "...", "cohort_year": 2023, "person": "..."}}
+- is_realtime_required: true/false
 """.strip()
     user_prompt = f"[이전 대화]\n{history_text or '이전 대화 없음'}\n\n[현재 질문]\n{question}"
     try:
@@ -618,12 +606,16 @@ def build_conversation_state(question: str, history: list[ChatHistoryMessage], i
     
     # Determine domain intent from LLM interpretation primarily
     domain_intent = interpretation.get("domain")
-    if not domain_intent:
-        frame = build_query_frame(question, history, interpretation)
-        domain_intent = "rag"
-        if frame.entity:
-            entity_config = ENTITY_CATALOG.get(frame.entity, {})
-            domain_intent = entity_config.get("domain", "rag")
+    
+    # Heuristic override/fallback for specific sensitive domains
+    frame = build_query_frame(question, history, interpretation)
+    if frame.entity:
+        entity_config = ENTITY_CATALOG.get(frame.entity, {})
+        # If LLM didn't pick a specialized domain, but entity catalog has one, use it
+        if domain_intent in [None, "rag", "web_search"] and entity_config.get("domain"):
+            domain_intent = entity_config["domain"]
+            
+    if not domain_intent: domain_intent = "rag"
     
     return ConversationState(
         standalone_question=standalone_question,
