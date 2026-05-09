@@ -186,28 +186,16 @@ ENTITY_CATALOG: dict[str, dict[str, Any]] = {
         "domain": "general_education",
     },
     "학과소속": {"aliases": ["단과대학", "소속", "어느 대학", "무슨 대학"], "domain": "department_affiliation"},
-    "휴학": {
-        "aliases": ["휴학", "일반휴학", "특별휴학"],
-        "domain": "rag",
-        "official_route": "종합정보시스템 > 학적 > 휴학신청",
-        "fallback": "정확한 신청기간과 예외 조건은 학사공지 또는 소속 대학 교학팀에서 확인하세요.",
-    },
-    "복학": {
-        "aliases": ["복학"],
-        "domain": "rag",
-        "official_route": "종합정보시스템 > 학적 > 복학신청",
-        "fallback": "정확한 신청기간과 수강신청 연계 조건은 학사공지 또는 소속 대학 교학팀에서 확인하세요.",
-    },
+    "휴학": {"aliases": ["휴학", "일반휴학", "군휴학", "휴학신청"], "domain": "academic_administration"},
+    "복학": {"aliases": ["복학", "복학신청", "군복학"], "domain": "academic_administration"},
+    "장학": {"aliases": ["장학", "장학금", "백악장학", "국가장학"], "domain": "academic_administration"},
+    "학점교류": {"aliases": ["학점교류", "교류수학", "타대학"], "domain": "academic_administration"},
+    "학위취득유예": {"aliases": ["졸업유예", "학위취득유예", "졸업유보"], "domain": "academic_administration"},
     "성적포기": {
         "aliases": ["성적포기", "취득성적포기"],
         "domain": "rag",
         "official_route": "차세대종합정보시스템 > 종합정보 > 수업 > 성적 > 성적포기신청",
         "fallback": "정확한 신청기간과 대상자는 학사공지에서 확인하세요.",
-    },
-    "장학금": {
-        "aliases": ["장학금", "장학", "국가근로장학금", "국가근로"],
-        "domain": "rag",
-        "fallback": "장학금 신청기간은 교내 장학공지와 한국장학재단 공지를 함께 확인하세요.",
     },
     "학식": {
         "aliases": ["학식", "학생식당", "식단", "밥", "중식", "석식", "점심", "저녁", "기숙사 식당", "기숙사 식단"],
@@ -569,6 +557,7 @@ async def interpret_chat_request(question: str, history: list[ChatHistoryMessage
 - student_support_portal: THE조아, 수강신청 시스템 등 사이트 접속 경로 및 방법
 - graduation_policy: 학과별 졸업 이수학점, 졸업요건
 - general_education: 학번별 교양 교육과정 이수 요건
+- academic_administration: 휴학, 복학, 장학금 종류, 학점교류, 졸업유예 등 학사 행정 절차
 - current_date: 오늘 날짜, 요일
 - web_search: 최신 뉴스, 실시간 공지 등 동적 정보 (RAG에 없는 경우)
 - rag: 기타 일반적인 학사 규정, 도서관 이용 등 정적 정보
@@ -744,12 +733,24 @@ def build_cafeteria_answer(question: str, history: list[ChatHistoryMessage]) -> 
 
 # --- Dispatch Registry ---
 def build_general_education_answer(question: str, history: list[ChatHistoryMessage], state: ConversationState) -> StructuredAnswer | None:
-    cohort = state.cohort_year or 2023 # Default to 2023 if not specified
+    cohort = state.cohort_year or 2024 # Default to latest major system
     ref_key = f"general_education_{cohort}"
+    
+    # Precise period-based selection
     if ref_key not in ACADEMIC_REFERENCES:
-        # Fallback to 2023 if the specific year is missing but it's a general ed query
-        ref_key = "general_education_2023"
-        
+        if 2018 <= cohort <= 2019:
+            ref_key = "general_education_2018"
+        elif 2020 <= cohort <= 2020:
+            ref_key = "general_education_2020"
+        elif 2021 <= cohort <= 2022:
+            ref_key = "general_education_2021"
+        elif 2023 <= cohort <= 2023:
+            ref_key = "general_education_2023"
+        elif cohort >= 2024:
+            ref_key = "general_education_2024"
+        else:
+            ref_key = "general_education_2024" # Default fallback
+            
     ref = ACADEMIC_REFERENCES.get(ref_key)
     if not ref: return None
     
@@ -764,10 +765,9 @@ def build_general_education_answer(question: str, history: list[ChatHistoryMessa
     is_exclusion = any(k in question for k in exclude_keywords)
     
     if is_exclusion:
-        # Exclude items mentioned in the question (even partial matches)
         display_items = [
             item for item in items 
-            if not any(word in norm_q for word in [item['name'], item['name'].replace('교양', ''), item['name'].replace('기초교양-', '')])
+            if not any(word in norm_q for word in [item['name'].lower(), item['name'].replace('교양', '').lower(), item['name'].replace('기초교양-', '').lower()])
         ]
     else:
         matched_items = [item for item in items if normalize_entities(item['name']).lower() in norm_q]
@@ -802,6 +802,47 @@ def build_graduation_policy_answer(question: str, history: list[ChatHistoryMessa
             
     return StructuredAnswer(answer="\n".join(lines), sources=[policy.get("source") or "https://www.chosun.ac.kr"], answer_mode="graduation_policy")
 
+def build_academic_administration_answer(question: str, history: list[ChatHistoryMessage], state: ConversationState) -> StructuredAnswer | None:
+    ref = ACADEMIC_REFERENCES.get("academic_administration_info")
+    if not ref: return None
+    
+    norm_q = normalize_entities(question).lower()
+    lines = []
+    
+    # Matching logic for sub-topics
+    topics_map = {
+        "휴학": ["leave_of_absence"],
+        "복학": ["leave_of_absence"],
+        "장학": ["scholarship"],
+        "학점교류": ["credit_exchange"],
+        "유예": ["graduation_deferment"],
+        "졸업유보": ["graduation_deferment"]
+    }
+    
+    found_keys = []
+    for keyword, keys in topics_map.items():
+        if keyword in norm_q: found_keys.extend(keys)
+        
+    if not found_keys: return None
+    
+    for key in set(found_keys):
+        val = ref.get(key)
+        if val:
+            if isinstance(val, dict):
+                # Filter sub-topics if specific words are in question
+                if "휴학" in norm_q and "복학" not in norm_q:
+                    if val.get("general"): lines.append(str(val["general"]))
+                    if val.get("military"): lines.append(str(val["military"]))
+                elif "복학" in norm_q and "휴학" not in norm_q:
+                    if val.get("reinstatement"): lines.append(str(val["reinstatement"]))
+                else:
+                    for sub_val in val.values(): lines.append(str(sub_val))
+            else:
+                lines.append(str(val))
+                
+    if not lines: return None
+    return StructuredAnswer(answer="\n\n".join(lines), sources=["조선대학교 학사규정 및 안내"], answer_mode="academic_administration")
+
 DOMAIN_HANDLERS = {
     "student_support_portal": build_portal_answer,
     "academic_calendar": lambda q, h, s, i: build_academic_calendar_answer(q, h, i),
@@ -812,6 +853,7 @@ DOMAIN_HANDLERS = {
     "graduation_policy": build_graduation_policy_answer,
     "official_fallback": lambda q, h, s, i: build_entity_official_fallback_answer(q, h),
     "clarifying_question": lambda q, h, s, i: StructuredAnswer(answer=i.get("clarification_text") or "조금 더 구체적으로 말씀해 주시겠어요? (예: 학과, 학번 등)", sources=[], answer_mode="clarifying_question"),
+    "academic_administration": build_academic_administration_answer,
 }
 
 def build_structured_domain_answer(question: str, history: list[ChatHistoryMessage], state: ConversationState, interpretation: dict[str, Any] | None = None) -> StructuredAnswer | None:
