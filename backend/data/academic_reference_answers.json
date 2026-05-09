@@ -119,6 +119,22 @@
         "end_date": "2026-06-19"
       },
       {
+        "key": "spring_class_evaluation",
+        "aliases": ["수업평가"],
+        "term": "1학기",
+        "name": "수업평가",
+        "start_date": "2026-06-08",
+        "end_date": "2026-06-19"
+      },
+      {
+        "key": "spring_grade_input",
+        "aliases": ["성적 전산입력", "성적 입력"],
+        "term": "1학기",
+        "name": "성적 전산입력",
+        "start_date": "2026-06-15",
+        "end_date": "2026-06-23"
+      },
+      {
         "key": "spring_grade_view",
         "aliases": ["1학기 성적열람", "성적 열람", "성적열람"],
         "term": "1학기",

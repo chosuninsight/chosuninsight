@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 class ChatHistoryMessage(BaseModel):
@@ -55,6 +55,7 @@ class ConversationState:
     cohort_year: int | None
     domain_intent: str
     topic: str
+    slots: dict[str, Any] = field(default_factory=dict)
 
 @dataclass(frozen=True)
 class QueryFrame:

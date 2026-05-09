@@ -167,5 +167,17 @@
     "question": "학사일정 알려줘",
     "expected_mode": "clarifying_question",
     "must_include": ["어떤 학사일정", "기말고사"]
+  },
+  {
+    "name": "grad_policy_2018",
+    "question": "2018학번 컴퓨터공학과 졸업학점",
+    "expected_mode": "graduation_policy",
+    "must_include": ["컴퓨터공학과", "2018학년도", "140학점", "39학점", "84학점"]
+  },
+  {
+    "name": "grad_policy_2009",
+    "question": "2009학번 컴퓨터공학과 졸업학점",
+    "expected_mode": "graduation_policy",
+    "must_include": ["컴퓨터공학과", "2009학년도", "130학점", "전문교양 15학점", "BSM 18학점", "전공 60학점"]
   }
 ]

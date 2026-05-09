@@ -75,92 +75,76 @@ def rag_health():
 
 @app.post("/chat", response_model=ChatResponse, status_code=status.HTTP_200_OK)
 async def chat(req: ChatRequest):
-    # 1. 메모리 및 대화 해석
+    # 1. Memory and Intent Analysis
     history = req.history or []
-    if not history and CHAT_MEMORY_ENABLED:
+    if CHAT_MEMORY_ENABLED:
         memory_context = conversation_memory.build_context(req.session_id)
-        if memory_context:
-            history = [ChatHistoryMessage(role="user", content=memory_context)]
+        if memory_context and not any(memory_context in msg.content for msg in history):
+            history = [ChatHistoryMessage(role="user", content=memory_context)] + history
     
+    # LLM-driven interpretation (Domain, Slots, Topic)
     interpretation = await interpret_chat_request(req.question, history)
     state = build_conversation_state(req.question, history, interpretation)
     
-    # 2. 피드백/정정 처리 (Feedback Loop)
-    if interpretation.get("is_feedback"):
-        answer = await get_gpt_response(req.question, "", history, interpretation)
-        if CHAT_MEMORY_ENABLED:
-            conversation_memory.update(req.session_id, req.question, interpretation, state)
-        return {
-            "success": True,
-            "answer": append_basis_line(answer, "rag", []),
-            "sources": [],
-            "suggestions": ["미안해, 다시 알려줘", "학사일정 확인"],
-        }
+    # 2. Hybrid-RAG Pipeline (Primary Path)
+    # Get high-accuracy context from structured data or traditional RAG
+    structured_data = build_structured_domain_answer(req.question, history, state, interpretation)
+    context_text = ""
+    answer_mode = "rag"
+    sources = []
+    suggestion_context = ""
 
-    # 3. 실시간성 판단 (LLM 의도 기반)
-    # 이제 키워드 리스트 대신 LLM이 판단한 is_realtime_required 플래그를 사용합니다.
-    is_realtime_query = interpretation.get("is_realtime_required", False)
-    search_query = interpretation.get("standalone_question") or req.question
-
-    # 4. 구조화된 도메인 답변 (학사일정, 교수진, 졸업요건, 식단 등)
-    structured_answer = build_structured_domain_answer(req.question, history, state, interpretation)
-    if structured_answer and not is_realtime_query:
-        if CHAT_MEMORY_ENABLED:
-            conversation_memory.update(req.session_id, req.question, interpretation, state)
-        return {
-            "success": True,
-            "answer": append_basis_line(structured_answer.answer, structured_answer.answer_mode, structured_answer.sources),
-            "sources": [],
-            "suggestions": suggestions_for_answer(structured_answer.answer_mode, state, structured_answer.suggestion_context),
-            "debug": {"answer_mode": structured_answer.answer_mode, "interpretation": interpretation} if req.debug else None,
-        }
-
-    # 5. 일반 RAG 검색 수행 (실시간 질문이 아닐 때만 우선 시도)
-    if not is_realtime_query:
+    if structured_data:
+        context_text = structured_data.answer
+        answer_mode = structured_data.answer_mode
+        sources = structured_data.sources
+        suggestion_context = structured_data.suggestion_context
+    else:
+        # Fallback to vector search if no structured handler matched
+        search_query = interpretation.get("standalone_question") or req.question
         search_result = search_docs(search_query)
         if search_result.hits:
-            context = "\n".join(hit.content for hit in search_result.hits)
-            answer = await get_gpt_response(req.question, context, history, interpretation)
-            
-            negative_patterns = ["정보를 찾지 못했습니다", "관련 자료가 없습니다", "알 수 없습니다", "확인할 수 없습니다"]
-            if not any(p in answer for p in negative_patterns):
-                if CHAT_MEMORY_ENABLED:
-                    conversation_memory.update(req.session_id, req.question, interpretation, state)
-                return {
-                    "success": True,
-                    "answer": append_basis_line(answer, "rag", []),
-                    "sources": [],
-                    "suggestions": suggestions_for_answer("rag", state),
-                }
+            context_text = "\n".join(hit.content for hit in search_result.hits)
+            answer_mode = "rag"
+            sources = [hit.source for hit in search_result.hits]
 
-    # 6. 실시간 질문이거나 RAG에서 답을 못 찾은 경우 -> 웹 검색 (Jina AI)
-    web_answer = await build_official_web_search_answer_direct(req.question, history, interpretation)
-    if web_answer:
-        if CHAT_MEMORY_ENABLED:
-            conversation_memory.update(req.session_id, req.question, interpretation, state)
-        return {
-            "success": True,
-            "answer": append_basis_line(web_answer.answer, web_answer.answer_mode, web_answer.sources),
-            "sources": [],
-            "suggestions": suggestions_for_answer(web_answer.answer_mode, state, web_answer.suggestion_context),
-        }
+    # 3. Web Search Fallback (if context is still empty or explicitly requested)
+    is_realtime_query = interpretation.get("is_realtime_required", False)
+    if not context_text or is_realtime_query or state.domain_intent == "web_search":
+        web_answer = await build_official_web_search_answer_direct(req.question, history, interpretation)
+        if web_answer:
+            context_text = web_answer.answer
+            answer_mode = web_answer.answer_mode
+            sources = web_answer.sources
+            suggestion_context = web_answer.suggestion_context
+
+    # 4. Final Generation using LLM (Natural Language synthesis)
+    # Exceptions: current_date, clarifying_question should remain structured/direct
+    if answer_mode in ["current_date", "clarifying_question"]:
+        final_answer = context_text
+    else:
+        final_answer = await get_gpt_response(req.question, context_text, history, interpretation)
     
-    # 5. 최후의 보루: 안내 답변
-    fallback_answer = build_entity_official_fallback_answer(req.question, history)
-    if fallback_answer:
-        return {
-            "success": True,
-            "answer": append_basis_line(fallback_answer.answer, fallback_answer.answer_mode, fallback_answer.sources),
-            "sources": [],
-            "suggestions": suggestions_for_answer(fallback_answer.answer_mode, state, fallback_answer.suggestion_context),
-        }
+    # Validation for empty responses
+    if not final_answer or "정보를 찾지 못했습니다" in final_answer:
+        fallback_answer = build_entity_official_fallback_answer(req.question, history)
+        if fallback_answer:
+            final_answer = fallback_answer.answer
+            answer_mode = fallback_answer.answer_mode
 
-    # 모든 수단 실패 시 (매우 희박)
+    # Final cleanup and memory update
+    if not final_answer:
+        final_answer = "현재 관련 정보를 찾기 어렵습니다. 공식 홈페이지(https://www.chosun.ac.kr)를 확인해 주시기 바랍니다."
+
+    if CHAT_MEMORY_ENABLED:
+        conversation_memory.update(req.session_id, req.question, interpretation, state)
+
     return {
         "success": True,
-        "answer": append_basis_line("현재 관련 정보를 찾기 어렵습니다. 정확한 내용은 조선대학교 공식 홈페이지(https://www.chosun.ac.kr)나 해당 학과 사무실로 문의해 주시기 바랍니다.", "rag", []),
+        "answer": append_basis_line(final_answer, answer_mode, sources),
         "sources": [],
-        "suggestions": ["오늘 날짜 알려줘", "학사일정 확인하기"],
+        "suggestions": [], # Disabled per user request
+        "debug": {"answer_mode": answer_mode, "interpretation": interpretation} if req.debug else None,
     }
 
 @app.exception_handler(Exception)
