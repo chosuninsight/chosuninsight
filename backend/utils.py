@@ -2,6 +2,7 @@ import re
 import json
 from datetime import datetime, timedelta
 from typing import Any
+from urllib.parse import urlparse
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
@@ -10,6 +11,8 @@ except ImportError:
 from backend.config import QUERY_EXPANSION_RULES, KNOWLEDGE_STORE_PATH
 from backend.models import IndexedDocument, StructuredAnswer
 from rag_pipeline import normalize_entities
+
+OFFICIAL_SOURCE_HOST_SUFFIXES = ("chosun.ac.kr",)
 
 def tokenize_korean_text(text: str) -> list[str]:
     return re.findall(r"[0-9A-Za-z가-힣]+", text.lower())
@@ -115,7 +118,32 @@ def extract_urls_from_value(value: Any) -> list[str]:
         elif isinstance(obj, dict):
             for v in obj.values(): walk(v)
     walk(value)
-    return list(set(urls))
+    seen = set()
+    deduped = []
+    for url in urls:
+        if url in seen:
+            continue
+        seen.add(url)
+        deduped.append(url)
+    return deduped
+
+def is_official_source_url(url: str) -> bool:
+    try:
+        host = urlparse(str(url)).netloc.lower().split("@")[-1].split(":")[0]
+    except Exception:
+        return False
+    return any(host == suffix or host.endswith(f".{suffix}") for suffix in OFFICIAL_SOURCE_HOST_SUFFIXES)
+
+def filter_official_source_urls(urls: list[str]) -> list[str]:
+    seen = set()
+    filtered = []
+    for url in urls:
+        clean_url = str(url).strip()
+        if not clean_url or clean_url in seen or not is_official_source_url(clean_url):
+            continue
+        seen.add(clean_url)
+        filtered.append(clean_url)
+    return filtered
 
 def save_web_discovery(question: str, answer: str, sources: list[str], mode: str):
     try:
@@ -124,6 +152,10 @@ def save_web_discovery(question: str, answer: str, sources: list[str], mode: str
         data = json.loads(KNOWLEDGE_STORE_PATH.read_text(encoding="utf-8"))
         if any(item.get("question") == question for item in data[-100:]):
             return
+        if mode == "official_web_search":
+            sources = filter_official_source_urls(sources)
+            if not sources:
+                return
         
         now = datetime.now(ZoneInfo("Asia/Seoul"))
         # 시간 민감성 키워드 체크 (오늘, 내일, 어제, 현재, 지금, 축제 등)
@@ -164,8 +196,10 @@ def find_in_web_knowledge(question: str) -> StructuredAnswer | None:
                 expire_at = datetime.fromisoformat(item.get("expire_at"))
                 if now < expire_at:
                     sources = item.get("sources", [])
-                    if item.get("mode") == "official_web_search" and not any("chosun.ac.kr" in str(source) for source in sources):
-                        continue
+                    if item.get("mode") == "official_web_search":
+                        sources = filter_official_source_urls(sources)
+                        if not sources:
+                            continue
                     return StructuredAnswer(
                         answer=item.get("answer", ""),
                         sources=sources,

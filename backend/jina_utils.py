@@ -6,6 +6,7 @@ import hashlib
 import time
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime
+from backend.utils import is_official_source_url
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
@@ -71,13 +72,18 @@ class JinaSearchTool:
         self.max_results = max_results
         self.base_url = "https://s.jina.ai/"
 
-    def run(self, query: str) -> str:
-        cached_result = web_search_cache.get(query)
+    def run(self, query: str, official_only: bool = False) -> str:
+        cache_query = f"{query} official_only={official_only}"
+        cached_result = web_search_cache.get(cache_query)
         if cached_result:
             print(f"Log: [Cache Hit] Query: {query}")
             return cached_result["formatted_text"]
 
-        url = f"{self.base_url}{requests.utils.quote(query)}"
+        search_query = query
+        if official_only and "site:chosun.ac.kr" not in search_query:
+            search_query = f"{query} site:chosun.ac.kr"
+
+        url = f"{self.base_url}{requests.utils.quote(search_query)}"
         headers = {
             "Accept": "application/json",
             "X-With-Generated-Alt": "true"
@@ -91,8 +97,10 @@ class JinaSearchTool:
             response.raise_for_status()
             data = response.json()
             
-            summary = data.get("chatResponse", "")
+            summary = "" if official_only else data.get("chatResponse", "")
             results = data.get("data", [])
+            if official_only:
+                results = [res for res in results if is_official_source_url(res.get("url", ""))]
             
             if not results and not summary:
                 return "검색 결과가 없습니다."
@@ -111,8 +119,11 @@ class JinaSearchTool:
                 formatted.append(f"[{i+1}] {title}\nURL: {link}\nContent: {content}\n")
             
             formatted_text = "\n".join(formatted)
+            if official_only and not formatted_text.strip():
+                return "조선대학교 공식 출처 검색 결과가 없습니다."
+
             ttl = 3600 if any(k in query for k in ["축제", "대동제", "라인업"]) else 21600
-            web_search_cache.set(query, {"formatted_text": formatted_text, "raw_data": data}, ttl_seconds=ttl)
+            web_search_cache.set(cache_query, {"formatted_text": formatted_text, "raw_data": data}, ttl_seconds=ttl)
             
             return formatted_text
         except Exception as e:

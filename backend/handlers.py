@@ -914,13 +914,13 @@ async def build_official_web_search_answer_direct(
 
     # 3. Jina AI 검색
     jina = JinaSearchTool(api_key=JINA_API_KEY, max_results=WEB_SEARCH_MAX_RESULTS)
-    search_results_text = jina.run(search_query)
+    search_results_text = jina.run(search_query, official_only=True)
 
-    if "검색 결과가 없습니다" in search_results_text: return None
+    if "검색 결과가 없습니다" in search_results_text or "오류 발생" in search_results_text: return None
 
     # 4. GPT 요약 (범용적 구체화 지침)
     now = datetime.now(ZoneInfo("Asia/Seoul"))
-    system_prompt = f"""너는 조선대학교 학사 행정 안내 챗봇 '조선인사이트'야. 제공된 웹 검색 결과를 바탕으로 답변해.
+    system_prompt = f"""너는 조선대학교 학사 행정 안내 챗봇 '조선인사이트'야. 제공된 조선대학교 공식 웹 검색 결과만 바탕으로 답변해.
     [현재 날짜: {now.strftime("%Y-%m-%d")}]
 
     지침:
@@ -938,7 +938,9 @@ async def build_official_web_search_answer_direct(
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
         )
         answer = response.choices[0].message.content.replace("*", "").strip()
-        sources = extract_urls_from_value(search_results_text)[:5]
+        sources = filter_official_source_urls(extract_urls_from_value(search_results_text))[:5]
+        if not sources:
+            return None
 
         # 5. 지식 저장소 저장
         save_web_discovery(question, answer, sources, mode="official_web_search")
