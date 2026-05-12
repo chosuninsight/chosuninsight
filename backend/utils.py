@@ -163,9 +163,12 @@ def find_in_web_knowledge(question: str) -> StructuredAnswer | None:
             if item.get("question") == question:
                 expire_at = datetime.fromisoformat(item.get("expire_at"))
                 if now < expire_at:
+                    sources = item.get("sources", [])
+                    if item.get("mode") == "official_web_search" and not any("chosun.ac.kr" in str(source) for source in sources):
+                        continue
                     return StructuredAnswer(
                         answer=item.get("answer", ""),
-                        sources=item.get("sources", []),
+                        sources=sources,
                         answer_mode="official_web_search",
                     )
     except Exception as e:

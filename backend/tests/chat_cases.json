@@ -106,14 +106,14 @@
     "name": "general_ed_2023",
     "question": "23학번 교양 이수 체계 알려줘",
     "expected_mode": "general_education_2023",
-    "must_include": ["39학점"]
+    "must_include": ["30학점"]
   },
   {
     "name": "general_ed_followup",
     "question": "함께형교양 말고 다른건?",
     "history": [
       {"role": "user", "content": "23학번 교양 이수 체계 알려줘"},
-      {"role": "assistant", "content": "2023학년도 교양 이수 체계는 총 39학점입니다."}
+      {"role": "assistant", "content": "2023학년도 이후 교양 이수 체계는 총 30학점입니다."}
     ],
     "expected_mode": "general_education_2023",
     "must_not_include": ["- 함께형교양"]

@@ -609,6 +609,17 @@ def build_conversation_state(question: str, history: list[ChatHistoryMessage], i
     
     # Heuristic override/fallback for specific sensitive domains
     frame = build_query_frame(question, history, interpretation)
+    normalized_combined = normalize_entities(combined_text).lower().replace(" ", "")
+    has_general_ed_terms = "교양" in normalized_combined and any(term in normalized_combined for term in ["이수체계", "교육과정", "교양과정", "영역", "함께형", "기초교양", "균형교양", "융합교양"])
+    has_general_credit_terms = "교양" in normalized_combined and any(term in normalized_combined for term in ["이수학점", "졸업이수학점", "몇학점"])
+    if has_general_ed_terms and cohort_year:
+        domain_intent = "general_education"
+    elif has_general_ed_terms and domain_intent in [None, "rag", "web_search"]:
+        domain_intent = "clarifying_question"
+        interpretation["clarification_text"] = "교양 이수 체계는 입학년도별로 달라요. 몇 학번 기준으로 안내해 드릴까요?"
+    elif has_general_credit_terms and department and cohort_year:
+        domain_intent = "graduation_policy"
+
     if frame.entity:
         entity_config = ENTITY_CATALOG.get(frame.entity, {})
         # If LLM didn't pick a specialized domain, but entity catalog has one, use it
@@ -864,20 +875,19 @@ def build_structured_domain_answer(question: str, history: list[ChatHistoryMessa
     handler = DOMAIN_HANDLERS.get(intent)
     if handler:
         try:
-            # Flexible argument passing
             import inspect
             sig = inspect.signature(handler)
-            args = []
-            if 'question' in sig.parameters: args.append(question)
-            if 'history' in sig.parameters: args.append(history)
-            if 'state' in sig.parameters: args.append(state)
-            if 'interpretation' in sig.parameters: args.append(interpretation)
-            
-            # Simple fallback if signature detection is too complex for lambdas
-            if intent in ["academic_calendar", "cafeteria"]:
+            param_count = len(sig.parameters)
+            if param_count >= 4:
                 answer = handler(question, history, state, interpretation)
+            elif param_count == 3:
+                answer = handler(question, history, state)
+            elif param_count == 2:
+                answer = handler(question, history)
+            elif param_count == 1:
+                answer = handler(question)
             else:
-                answer = handler(*args)
+                answer = handler()
 
             if isinstance(answer, StructuredAnswer): return answer
             if isinstance(answer, str):
