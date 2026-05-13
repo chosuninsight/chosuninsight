@@ -235,7 +235,7 @@ async def chat(req: ChatRequest):
             "debug": {"answer_mode": "memory_disable", "memory": memory_debug_payload(req.session_id, req.debug)} if req.debug else None,
         }
 
-    if CHAT_MEMORY_ENABLED and is_memory_clear_question(req.question):
+    if CHAT_MEMORY_ENABLED and req.memory_enabled and is_memory_clear_question(req.question):
         deleted = conversation_memory.clear(req.session_id)
         return {
             "success": True,
@@ -245,7 +245,7 @@ async def chat(req: ChatRequest):
             "debug": {"answer_mode": "memory_clear", "memory": memory_debug_payload(req.session_id, req.debug)} if req.debug else None,
         }
 
-    if CHAT_MEMORY_ENABLED and is_memory_delete_question(req.question):
+    if CHAT_MEMORY_ENABLED and req.memory_enabled and is_memory_delete_question(req.question):
         deleted = conversation_memory.delete_matching(req.session_id, req.question)
         answer = "요청하신 기억을 삭제했습니다." if deleted else "삭제할 관련 기억을 찾지 못했습니다."
         return {
@@ -257,12 +257,12 @@ async def chat(req: ChatRequest):
         }
 
     memory_context = ""
-    if CHAT_MEMORY_ENABLED:
+    if CHAT_MEMORY_ENABLED and req.memory_enabled:
         memory_context = conversation_memory.build_context(req.session_id, req.question)
         if memory_context and not any(memory_context in msg.content for msg in history):
             history = [ChatHistoryMessage(role="user", content=memory_context)] + history
 
-    if CHAT_MEMORY_ENABLED and memory_context and is_memory_recall_question(req.question):
+    if CHAT_MEMORY_ENABLED and req.memory_enabled and memory_context and is_memory_recall_question(req.question):
         memory_debug = conversation_memory.debug_snapshot(req.session_id) if req.debug else None
         return {
             "success": True,
@@ -329,7 +329,7 @@ async def chat(req: ChatRequest):
     if not final_answer:
         final_answer = "현재 관련 정보를 찾기 어렵습니다. 조선대학교 공식 홈페이지(https://www.chosun.ac.kr)를 확인해 주시기 바랍니다."
 
-    if CHAT_MEMORY_ENABLED:
+    if CHAT_MEMORY_ENABLED and req.memory_enabled:
         conversation_memory.update(req.session_id, req.question, interpretation, state, final_answer)
 
     debug_payload = None

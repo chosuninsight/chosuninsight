@@ -119,7 +119,7 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import introImg from '../assets/intro.png'
 import MenuCard from '../components/MenuCard.vue'
 import ChatMessage from '../components/ChatMessage.vue'
@@ -151,9 +151,27 @@ const inputText = ref('')
 const chatBox = ref(null)
 const isLoading = ref(false)
 const memoryItems = ref([])
-const memoryEnabled = ref(true)
+const memoryEnabled = ref(localStorage.getItem('chosun_memory_consent') === 'granted')
 const memoryLoading = ref(false)
 const debugMode = import.meta.env.DEV || localStorage.getItem('chosun_debug') === 'true'
+
+// 동의 상태 실시간 감지
+const handleConsentUpdate = (event) => {
+  memoryEnabled.value = event.detail === 'granted'
+  if (memoryEnabled.value) {
+    refreshMemory()
+  } else {
+    memoryItems.value = []
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('chosun-memory-consent-updated', handleConsentUpdate)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('chosun-memory-consent-updated', handleConsentUpdate)
+})
 
 function now() {
   const d = new Date()

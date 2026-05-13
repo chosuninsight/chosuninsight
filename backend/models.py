@@ -12,6 +12,7 @@ class ChatRequest(BaseModel):
     debug: bool = False
     session_id: str | None = None
     history: list[ChatHistoryMessage] = Field(default_factory=list)
+    memory_enabled: bool = True
 
 class ChatResponse(BaseModel):
     success: bool

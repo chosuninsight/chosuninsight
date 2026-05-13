@@ -11,6 +11,9 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'api';
  * @returns {Promise<{answer: string, links: Array, debug: object|null}>}
  */
 export const fetchChatResponse = async (question, debug = false, sessionId = null, history = []) => {
+  const memoryConsent = localStorage.getItem('chosun_memory_consent');
+  const isMemoryEnabled = memoryConsent === 'granted';
+
   try {
     const response = await fetch(`${API_BASE_URL}/chat`, {
       method: 'POST',
@@ -21,7 +24,8 @@ export const fetchChatResponse = async (question, debug = false, sessionId = nul
         question, 
         debug, 
         session_id: sessionId ? String(sessionId) : null,
-        history: history 
+        history: history,
+        memory_enabled: isMemoryEnabled
       }),
     });
 
