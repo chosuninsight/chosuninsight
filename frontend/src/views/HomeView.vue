@@ -14,6 +14,7 @@
       @refresh-memory="refreshMemory"
       @delete-memory-item="onDeleteMemoryItem"
       @clear-memory="onClearMemory"
+      @enable-memory="onEnableMemory"
     />
 
     <!-- 오른쪽: 기존 채팅 영역 -->
@@ -298,6 +299,12 @@ async function onClearMemory() {
   } catch {
     await refreshMemory()
   }
+}
+
+function onEnableMemory() {
+  localStorage.setItem('chosun_memory_consent', 'granted')
+  // 커스텀 이벤트 발생시켜서 현재 페이지 내의 다른 감시자들에게 알림
+  window.dispatchEvent(new CustomEvent('chosun-memory-consent-updated', { detail: 'granted' }))
 }
 
 watch(currentChatId, () => {

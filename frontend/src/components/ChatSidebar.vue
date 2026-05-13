@@ -78,7 +78,12 @@
           </button>
         </div>
         <p v-if="memoryLoading" class="memory-empty">불러오는 중</p>
-        <p v-else-if="!memoryEnabled" class="memory-empty">꺼짐</p>
+        <div v-else-if="!memoryEnabled" class="memory-disabled-wrap">
+          <p class="memory-empty">비활성화됨</p>
+          <button class="memory-enable-btn" @click.stop="$emit('enable-memory')">
+            기능 켜기
+          </button>
+        </div>
         <p v-else-if="memoryItems.length === 0" class="memory-empty">저장된 메모리 없음</p>
         <ul v-else class="memory-list">
           <li v-for="item in memoryItems" :key="item.id" class="memory-item">
@@ -152,7 +157,7 @@ defineProps({
   memoryLoading: { type: Boolean, default: false },
 })
 
-defineEmits(['new-chat', 'load-chat', 'delete-chat', 'clear-all', 'refresh-memory', 'delete-memory-item', 'clear-memory'])
+defineEmits(['new-chat', 'load-chat', 'delete-chat', 'clear-all', 'refresh-memory', 'delete-memory-item', 'clear-memory', 'enable-memory'])
 
 const isExpanded = ref(false)
 const memoryOpen = ref(false)
@@ -368,6 +373,31 @@ const memoryOpen = ref(false)
   font-size: 12px;
   margin: 0;
   padding: 4px;
+}
+
+.memory-disabled-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px;
+}
+
+.memory-enable-btn {
+  background: #e1efff;
+  color: #3b82f6;
+  border: 1px solid #c8e1ff;
+  border-radius: 6px;
+  padding: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.memory-enable-btn:hover {
+  background: #3b82f6;
+  color: white;
+  border-color: #3b82f6;
 }
 
 .memory-list {
