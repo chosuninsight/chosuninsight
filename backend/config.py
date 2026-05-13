@@ -7,6 +7,7 @@ load_dotenv()
 # API Keys
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 JINA_API_KEY = os.getenv("JINA_API_KEY")
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "chosun-insight-secure-key-2026")
 
 # Model Settings
 CHAT_MODEL_NAME = os.getenv("CHAT_MODEL_NAME", "gpt-4o-mini")

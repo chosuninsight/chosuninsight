@@ -1,6 +1,7 @@
 // src/services/api.js
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'api';
+const INTERNAL_API_KEY = 'chosun-insight-secure-key-2026';
 
 /**
  * 백엔드 RAG 서버와 통신하여 답변을 받아오는 함수
@@ -70,7 +71,10 @@ export const deleteChatMemoryItem = async (sessionId, memoryId) => {
   if (!sessionId || !memoryId) return null;
   const response = await fetch(
     `${API_BASE_URL}/memory/${encodeURIComponent(String(sessionId))}/items/${encodeURIComponent(String(memoryId))}`,
-    { method: 'DELETE' }
+    { 
+      method: 'DELETE',
+      headers: { 'X-API-KEY': INTERNAL_API_KEY }
+    }
   );
   if (!response.ok) throw new Error('메모리 항목 삭제에 실패했습니다.');
   const data = await response.json();

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from typing import Any
@@ -11,7 +11,18 @@ from backend.handlers import *
 from backend.memory import create_conversation_memory_store
 
 # =====================================
-# 1. FastAPI 기본 설정
+# 1. 보안 및 의존성 설정
+# =====================================
+async def verify_api_key(x_api_key: str = Header(None)):
+    if not x_api_key or x_api_key != INTERNAL_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="유효하지 않은 API 키입니다."
+        )
+    return x_api_key
+
+# =====================================
+# 2. FastAPI 기본 설정
 # =====================================
 app = FastAPI(title="Chosun RAG API")
 
@@ -209,7 +220,7 @@ def delete_memory_item(session_id: str, memory_id: str):
         "memory": conversation_memory.debug_snapshot(session_id),
     }
 
-@app.post("/chat", response_model=ChatResponse, status_code=status.HTTP_200_OK)
+@app.post("/chat", response_model=ChatResponse, status_code=status.HTTP_200_OK, dependencies=[Depends(verify_api_key)])
 async def chat(req: ChatRequest):
     # 1. Memory and Intent Analysis
     history = req.history or []
@@ -352,4 +363,6 @@ def global_exception_handler(request, exc):
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"success": False, "message": "서버 내부 오류 발생", "detail": str(exc)}
+    )
+ss": False, "message": "서버 내부 오류 발생", "detail": str(exc)}
     )
