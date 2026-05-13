@@ -1,13 +1,14 @@
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from typing import Any
 
 from backend.config import *
 from backend.models import *
 from backend.utils import *
 from backend.search_logic import *
 from backend.handlers import *
-from backend.memory import ConversationMemoryStore
+from backend.memory import create_conversation_memory_store
 
 # =====================================
 # 1. FastAPI 기본 설정
@@ -22,10 +23,120 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-conversation_memory = ConversationMemoryStore(
+conversation_memory = create_conversation_memory_store(
+    provider=MEMORY_PROVIDER,
     ttl_seconds=CHAT_MEMORY_TTL_SECONDS,
     max_sessions=CHAT_MEMORY_MAX_SESSIONS,
+    store_path=MEMORY_STORE_PATH,
+    agent_id=MEMORY_AGENT_ID,
 )
+
+
+def is_memory_recall_question(question: str) -> bool:
+    normalized = str(question or "").replace(" ", "")
+    return any(
+        marker in normalized
+        for marker in [
+            "내가알려준정보",
+            "내정보",
+            "뭘기억",
+            "뭐기억",
+            "기억하고있는",
+            "기억나는",
+            "알려준게뭐",
+        ]
+    )
+
+
+def is_memory_clear_question(question: str) -> bool:
+    normalized = str(question or "").replace(" ", "")
+    return any(
+        marker in normalized
+        for marker in [
+            "내정보초기화",
+            "메모리초기화",
+            "기억초기화",
+            "내정보다지워",
+            "기억다지워",
+            "모든기억삭제",
+            "전체기억삭제",
+        ]
+    )
+
+
+def is_memory_disable_question(question: str) -> bool:
+    normalized = str(question or "").replace(" ", "")
+    return any(
+        marker in normalized
+        for marker in [
+            "앞으로기억하지마",
+            "앞으론기억하지마",
+            "이제기억하지마",
+            "메모리꺼",
+            "기억기능꺼",
+            "저장하지마",
+            "내정보저장하지마",
+        ]
+    )
+
+
+def is_memory_enable_question(question: str) -> bool:
+    normalized = str(question or "").replace(" ", "")
+    return any(
+        marker in normalized
+        for marker in [
+            "다시기억해",
+            "기억다시해",
+            "메모리켜",
+            "기억기능켜",
+            "저장해도돼",
+            "기억해도돼",
+        ]
+    )
+
+
+def is_memory_delete_question(question: str) -> bool:
+    normalized = str(question or "").replace(" ", "")
+    return any(
+        marker in normalized
+        for marker in [
+            "기억하지마",
+            "기억하지말아",
+            "기억에서빼",
+            "기억에서삭제",
+            "기억삭제",
+            "메모리삭제",
+            "정보삭제",
+            "내정보삭제",
+            "지워줘",
+            "지워",
+            "없애줘",
+            "없애",
+            "삭제해줘",
+            "삭제",
+            "잊어줘",
+            "잊어버려",
+            "까먹어",
+        ]
+    )
+
+
+def format_memory_recall_answer(memory_context: str) -> str:
+    text = memory_context
+    text = text.replace("이전 대화에서 사용자가 알려준 개인 상황 참고 정보: ", "")
+    text = text.replace("이전 대화에서 사용자가 알려준 정보: ", "")
+    text = text.replace(
+        ". 이 정보는 사용자의 상황 파악용이며 조선대학교 공식 학사 정보보다 우선하지 않는다.",
+        "",
+    )
+    facts = [part.strip() for part in text.rstrip(".").split(";") if part.strip()]
+    if not facts:
+        return "현재 기억하고 있는 개인 상황 정보는 없습니다."
+    return "현재 기억하고 있는 정보는 다음과 같습니다.\n" + "\n".join(f"• {fact}" for fact in facts)
+
+
+def memory_debug_payload(session_id: str | None, enabled: bool) -> dict[str, Any] | None:
+    return conversation_memory.debug_snapshot(session_id) if enabled else None
 
 # =====================================
 # 2. API Routes
@@ -73,14 +184,93 @@ def rag_health():
         "errors": errors,
     }
 
+@app.get("/memory/{session_id}", status_code=status.HTTP_200_OK)
+def get_memory(session_id: str):
+    return {
+        "success": True,
+        "memory": conversation_memory.debug_snapshot(session_id),
+    }
+
+@app.delete("/memory/{session_id}", status_code=status.HTTP_200_OK)
+def clear_memory(session_id: str):
+    deleted = conversation_memory.clear(session_id)
+    return {
+        "success": True,
+        "deleted": deleted,
+        "memory": conversation_memory.debug_snapshot(session_id),
+    }
+
+@app.delete("/memory/{session_id}/items/{memory_id}", status_code=status.HTTP_200_OK)
+def delete_memory_item(session_id: str, memory_id: str):
+    deleted = conversation_memory.delete_by_id(session_id, memory_id)
+    return {
+        "success": True,
+        "deleted": deleted,
+        "memory": conversation_memory.debug_snapshot(session_id),
+    }
+
 @app.post("/chat", response_model=ChatResponse, status_code=status.HTTP_200_OK)
 async def chat(req: ChatRequest):
     # 1. Memory and Intent Analysis
     history = req.history or []
+
+    if CHAT_MEMORY_ENABLED and is_memory_enable_question(req.question):
+        conversation_memory.set_enabled(req.session_id, True)
+        return {
+            "success": True,
+            "answer": "이제부터 이 채팅에서 알려준 개인 상황 정보를 다시 기억하겠습니다.",
+            "sources": [],
+            "suggestions": [],
+            "debug": {"answer_mode": "memory_enable", "memory": memory_debug_payload(req.session_id, req.debug)} if req.debug else None,
+        }
+
+    if CHAT_MEMORY_ENABLED and is_memory_disable_question(req.question):
+        deleted = conversation_memory.clear(req.session_id)
+        conversation_memory.set_enabled(req.session_id, False)
+        return {
+            "success": True,
+            "answer": f"앞으로 이 채팅에서는 개인 상황 정보를 기억하지 않겠습니다. 기존에 기억하던 정보 {deleted}개도 삭제했습니다.",
+            "sources": [],
+            "suggestions": [],
+            "debug": {"answer_mode": "memory_disable", "memory": memory_debug_payload(req.session_id, req.debug)} if req.debug else None,
+        }
+
+    if CHAT_MEMORY_ENABLED and is_memory_clear_question(req.question):
+        deleted = conversation_memory.clear(req.session_id)
+        return {
+            "success": True,
+            "answer": f"기억하고 있던 개인 상황 정보 {deleted}개를 삭제했습니다.",
+            "sources": [],
+            "suggestions": [],
+            "debug": {"answer_mode": "memory_clear", "memory": memory_debug_payload(req.session_id, req.debug)} if req.debug else None,
+        }
+
+    if CHAT_MEMORY_ENABLED and is_memory_delete_question(req.question):
+        deleted = conversation_memory.delete_matching(req.session_id, req.question)
+        answer = "요청하신 기억을 삭제했습니다." if deleted else "삭제할 관련 기억을 찾지 못했습니다."
+        return {
+            "success": True,
+            "answer": answer,
+            "sources": [],
+            "suggestions": [],
+            "debug": {"answer_mode": "memory_delete", "memory": memory_debug_payload(req.session_id, req.debug)} if req.debug else None,
+        }
+
+    memory_context = ""
     if CHAT_MEMORY_ENABLED:
-        memory_context = conversation_memory.build_context(req.session_id)
+        memory_context = conversation_memory.build_context(req.session_id, req.question)
         if memory_context and not any(memory_context in msg.content for msg in history):
             history = [ChatHistoryMessage(role="user", content=memory_context)] + history
+
+    if CHAT_MEMORY_ENABLED and memory_context and is_memory_recall_question(req.question):
+        memory_debug = conversation_memory.debug_snapshot(req.session_id) if req.debug else None
+        return {
+            "success": True,
+            "answer": format_memory_recall_answer(memory_context),
+            "sources": [],
+            "suggestions": [],
+            "debug": {"answer_mode": "memory_recall", "memory": memory_debug} if req.debug else None,
+        }
     
     # LLM-driven interpretation (Domain, Slots, Topic)
     interpretation = await interpret_chat_request(req.question, history)
@@ -140,14 +330,21 @@ async def chat(req: ChatRequest):
         final_answer = "현재 관련 정보를 찾기 어렵습니다. 조선대학교 공식 홈페이지(https://www.chosun.ac.kr)를 확인해 주시기 바랍니다."
 
     if CHAT_MEMORY_ENABLED:
-        conversation_memory.update(req.session_id, req.question, interpretation, state)
+        conversation_memory.update(req.session_id, req.question, interpretation, state, final_answer)
+
+    debug_payload = None
+    if req.debug:
+        debug_payload = {"answer_mode": answer_mode, "interpretation": interpretation}
+        memory_debug = conversation_memory.debug_snapshot(req.session_id) if CHAT_MEMORY_ENABLED else None
+        if memory_debug:
+            debug_payload["memory"] = memory_debug
 
     return {
         "success": True,
         "answer": append_basis_line(final_answer, answer_mode, sources),
         "sources": [],
         "suggestions": [], # Disabled per user request
-        "debug": {"answer_mode": answer_mode, "interpretation": interpretation} if req.debug else None,
+        "debug": debug_payload,
     }
 
 @app.exception_handler(Exception)

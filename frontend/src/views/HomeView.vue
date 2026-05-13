@@ -4,10 +4,16 @@
     <ChatSidebar
       :histories="histories"
       :currentChatId="currentChatId"
+      :memoryItems="memoryItems"
+      :memoryEnabled="memoryEnabled"
+      :memoryLoading="memoryLoading"
       @new-chat="onNewChat"
       @load-chat="onLoadChat"
       @delete-chat="onDeleteChat"
       @clear-all="onClearAll"
+      @refresh-memory="refreshMemory"
+      @delete-memory-item="onDeleteMemoryItem"
+      @clear-memory="onClearMemory"
     />
 
     <!-- 오른쪽: 기존 채팅 영역 -->
@@ -25,16 +31,34 @@
 
       <!-- 메뉴 카드 영역 -->
       <div class="menu-carousel">
-        <section class="menu-section" :style="{ gridTemplateColumns: `repeat(${currentPageItems.length}, 1fr)` }">
-          <MenuCard
-            v-for="item in currentPageItems"
-            :key="item.label"
-            :icon="item.icon"
-            :label="item.label"
-            :iconColor="item.iconColor"
-            @click="onMenuClick"
-          />
-        </section>
+        <div class="menu-strip">
+          <button
+            class="menu-arrow left"
+            :disabled="menuPage === 0"
+            @click.stop="goToPrevMenuPage"
+            title="이전 메뉴"
+          >
+            <ChevronLeft :size="18" />
+          </button>
+          <section class="menu-section" :style="{ gridTemplateColumns: `repeat(${currentPageItems.length}, 1fr)` }">
+            <MenuCard
+              v-for="item in currentPageItems"
+              :key="item.label"
+              :icon="item.icon"
+              :label="item.label"
+              :iconColor="item.iconColor"
+              @click="onMenuClick(item)"
+            />
+          </section>
+          <button
+            class="menu-arrow right"
+            :disabled="menuPage >= totalPages - 1"
+            @click.stop="goToNextMenuPage"
+            title="다음 메뉴"
+          >
+            <ChevronRight :size="18" />
+          </button>
+        </div>
         <div class="menu-dots">
           <span
             v-for="i in totalPages"
@@ -95,14 +119,14 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
 import introImg from '../assets/intro.png'
 import MenuCard from '../components/MenuCard.vue'
 import ChatMessage from '../components/ChatMessage.vue'
 import ChatSidebar from '../components/ChatSidebar.vue'
 import { useChatHistory } from '../composables/useChatHistory.js'
-import { ArrowUp } from 'lucide-vue-next'
-import { fetchChatResponse } from '../services/api.js'
+import { ArrowUp, ChevronLeft, ChevronRight } from 'lucide-vue-next'
+import { clearChatMemory, deleteChatMemoryItem, fetchChatMemory, fetchChatResponse } from '../services/api.js'
 import { menuItems } from '../data/menuItems.js'
 
 const { histories, currentChatId, createNewChat, saveCurrentChat, loadChat, loadLastChat, deleteChat, clearAll } = useChatHistory()
@@ -126,6 +150,9 @@ const messages = ref(_restored ?? createNewChat())
 const inputText = ref('')
 const chatBox = ref(null)
 const isLoading = ref(false)
+const memoryItems = ref([])
+const memoryEnabled = ref(true)
+const memoryLoading = ref(false)
 const debugMode = import.meta.env.DEV || localStorage.getItem('chosun_debug') === 'true'
 
 function now() {
@@ -138,27 +165,43 @@ function now() {
 // 사이드바 이벤트 핸들러
 function onNewChat() {
   messages.value = createNewChat()
+  refreshMemory()
 }
 
 function onLoadChat(id) {
   const loaded = loadChat(id)
-  if (loaded) messages.value = loaded
+  if (loaded) {
+    messages.value = loaded
+    refreshMemory()
+  }
 }
 
 function onDeleteChat(id) {
   const wasCurrentChat = deleteChat(id)
   if (wasCurrentChat) messages.value = createNewChat()
+  clearChatMemory(id).catch(() => {})
+  refreshMemory()
 }
 
 function onClearAll() {
+  histories.value.forEach(item => clearChatMemory(item.id).catch(() => {}))
   clearAll()
   messages.value = createNewChat()
+  refreshMemory()
 }
 
-function onMenuClick(label) {
-  const item = menuItems.find(m => m.label === label)
-  addMessage('user', label + ' 알려주세요')
-  showBotReply(item.botReply, item.links)
+function onMenuClick(item) {
+  if (!item) return
+  addMessage('user', item.label + ' 알려주세요')
+  showBotReply(item.botReply, item.links || [])
+}
+
+function goToPrevMenuPage() {
+  menuPage.value = Math.max(0, menuPage.value - 1)
+}
+
+function goToNextMenuPage() {
+  menuPage.value = Math.min(totalPages.value - 1, menuPage.value + 1)
 }
 
 async function sendMessage() {
@@ -190,6 +233,7 @@ async function submitMessage(text) {
   try {
     const result = await fetchChatResponse(text, debugMode, currentChatId.value, history)
     addMessage('bot', result.answer, result.links, result.debug, result.suggestions)
+    await refreshMemory()
   } catch (error) {
     addMessage('bot', '죄송합니다. 서버와 연결할 수 없습니다. 백엔드 서버(uvicorn) 상태를 확인해 주세요.')
   } finally {
@@ -198,6 +242,49 @@ async function submitMessage(text) {
     saveCurrentChat(messages.value)
   }
 }
+
+async function refreshMemory() {
+  if (!currentChatId.value) {
+    memoryItems.value = []
+    memoryEnabled.value = true
+    return
+  }
+  memoryLoading.value = true
+  try {
+    const memory = await fetchChatMemory(currentChatId.value)
+    memoryItems.value = memory?.recent_memories || []
+    memoryEnabled.value = memory?.memory_enabled !== false
+  } catch {
+    memoryItems.value = []
+    memoryEnabled.value = true
+  } finally {
+    memoryLoading.value = false
+  }
+}
+
+async function onDeleteMemoryItem(memoryId) {
+  try {
+    const memory = await deleteChatMemoryItem(currentChatId.value, memoryId)
+    memoryItems.value = memory?.recent_memories || []
+    memoryEnabled.value = memory?.memory_enabled !== false
+  } catch {
+    await refreshMemory()
+  }
+}
+
+async function onClearMemory() {
+  try {
+    const memory = await clearChatMemory(currentChatId.value)
+    memoryItems.value = memory?.recent_memories || []
+    memoryEnabled.value = memory?.memory_enabled !== false
+  } catch {
+    await refreshMemory()
+  }
+}
+
+watch(currentChatId, () => {
+  refreshMemory()
+}, { immediate: true })
 
 function showBotReply(text, links = []) {
   isLoading.value = true
@@ -295,9 +382,65 @@ async function scrollToBottom() {
   gap: 8px;
 }
 
+.menu-strip {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.menu-strip::before,
+.menu-strip::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 28px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.menu-strip::before {
+  left: 40px;
+  background: linear-gradient(90deg, rgba(248, 251, 255, 0.9), rgba(248, 251, 255, 0));
+}
+
+.menu-strip::after {
+  right: 40px;
+  background: linear-gradient(270deg, rgba(248, 251, 255, 0.9), rgba(248, 251, 255, 0));
+}
+
 .menu-section {
   display: grid;
   gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.menu-arrow {
+  width: 32px;
+  border: 1px solid #d0e6f8;
+  border-radius: 8px;
+  background: white;
+  color: #6c9fc8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, opacity 0.15s;
+  z-index: 2;
+}
+
+.menu-arrow:hover:not(:disabled) {
+  background: #e8f3fb;
+  border-color: #add4ef;
+  color: #3e7fac;
+}
+
+.menu-arrow:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .menu-dots {

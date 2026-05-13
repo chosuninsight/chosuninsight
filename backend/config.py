@@ -28,8 +28,11 @@ WEB_SEARCH_MAX_RESULTS = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))
 
 # Memory Settings
 CHAT_MEMORY_ENABLED = os.getenv("CHAT_MEMORY_ENABLED", "true").lower() not in {"0", "false", "no"}
-CHAT_MEMORY_TTL_SECONDS = int(os.getenv("CHAT_MEMORY_TTL_SECONDS", "86400"))
+CHAT_MEMORY_TTL_SECONDS = int(os.getenv("CHAT_MEMORY_TTL_SECONDS", "2592000"))
 CHAT_MEMORY_MAX_SESSIONS = int(os.getenv("CHAT_MEMORY_MAX_SESSIONS", "500"))
+MEMORY_PROVIDER = os.getenv("MEMORY_PROVIDER", "mem0").strip().lower()
+MEMORY_STORE_PATH = os.getenv("MEMORY_STORE_PATH", "backend/data/local_memory_store.json")
+MEMORY_AGENT_ID = os.getenv("MEMORY_AGENT_ID", "chosuninsight")
 
 # Paths
 ACADEMIC_POLICY_PATH = Path(__file__).resolve().parent / "data" / "academic_policies.json"

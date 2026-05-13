@@ -43,3 +43,32 @@ export const fetchChatResponse = async (question, debug = false, sessionId = nul
     throw error;
   }
 };
+
+export const fetchChatMemory = async (sessionId) => {
+  if (!sessionId) return null;
+  const response = await fetch(`${API_BASE_URL}/memory/${encodeURIComponent(String(sessionId))}`);
+  if (!response.ok) throw new Error('메모리 조회에 실패했습니다.');
+  const data = await response.json();
+  return data.memory || null;
+};
+
+export const clearChatMemory = async (sessionId) => {
+  if (!sessionId) return null;
+  const response = await fetch(`${API_BASE_URL}/memory/${encodeURIComponent(String(sessionId))}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw new Error('메모리 삭제에 실패했습니다.');
+  const data = await response.json();
+  return data.memory || null;
+};
+
+export const deleteChatMemoryItem = async (sessionId, memoryId) => {
+  if (!sessionId || !memoryId) return null;
+  const response = await fetch(
+    `${API_BASE_URL}/memory/${encodeURIComponent(String(sessionId))}/items/${encodeURIComponent(String(memoryId))}`,
+    { method: 'DELETE' }
+  );
+  if (!response.ok) throw new Error('메모리 항목 삭제에 실패했습니다.');
+  const data = await response.json();
+  return data.memory || null;
+};
