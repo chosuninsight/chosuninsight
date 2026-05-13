@@ -33,6 +33,7 @@ services:
              uvicorn backend.main:app --host 0.0.0.0 --port 8000"
     volumes:
       - ./backend:/app/backend
+      - ./backend/data:/app/backend/data
       - ./rag_pipeline.py:/app/rag_pipeline.py
       - ./rebuild_chroma.py:/app/rebuild_chroma.py
       - ./chroma_db_store:/app/chroma_db

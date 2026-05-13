@@ -33,3 +33,4 @@ schedule  # (추가됨)
 
 # --- Validation ---
 pydantic>=2.0.0
+cryptography

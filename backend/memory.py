@@ -7,6 +7,10 @@ import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
+try:
+    from cryptography.fernet import Fernet
+except ImportError:
+    Fernet = None
 
 
 class MemoryProvider:
@@ -269,11 +273,20 @@ class LocalMem0MemoryStore(MemoryProvider):
         agent_id: str = "chosuninsight",
         ttl_seconds: int = 86400 * 30,
         max_sessions: int = 500,
+        encryption_key: str | None = None,
     ):
         self.store_path = store_path
         self.agent_id = agent_id
         self.ttl_seconds = ttl_seconds
         self.max_sessions = max_sessions
+        self.encryption_key = encryption_key
+        self._fernet = None
+        if encryption_key and Fernet:
+            try:
+                self._fernet = Fernet(encryption_key.encode())
+            except Exception as exc:
+                print(f"Warning: 유효하지 않은 메모리 암호화 키: {exc}")
+
         self._lock = threading.RLock()
         self._data: dict[str, Any] = {"sessions": {}}
         self._load()
@@ -561,8 +574,26 @@ class LocalMem0MemoryStore(MemoryProvider):
         if not os.path.exists(self.store_path):
             return
         try:
-            with open(self.store_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            with open(self.store_path, "rb") as f:
+                content = f.read()
+            if not content:
+                return
+
+            try:
+                # If content starts with '{', it's likely plain JSON
+                if content.strip().startswith(b"{"):
+                    data = json.loads(content.decode("utf-8"))
+                elif self._fernet:
+                    decrypted = self._fernet.decrypt(content)
+                    data = json.loads(decrypted.decode("utf-8"))
+                else:
+                    # Encrypted but no key provided
+                    print("Warning: 메모리가 암호화되어 있으나 복호화 키가 없습니다.")
+                    return
+            except Exception as exc:
+                print(f"Warning: 메모리 데이터 파싱/복호화 실패: {exc}")
+                return
+
             if isinstance(data, dict) and isinstance(data.get("sessions"), dict):
                 self._data = data
         except Exception as exc:
@@ -573,9 +604,16 @@ class LocalMem0MemoryStore(MemoryProvider):
             directory = os.path.dirname(self.store_path)
             if directory:
                 os.makedirs(directory, exist_ok=True)
+
+            raw_json = json.dumps(self._data, ensure_ascii=False, indent=2)
+            content = raw_json.encode("utf-8")
+
+            if self._fernet:
+                content = self._fernet.encrypt(content)
+
             tmp_path = f"{self.store_path}.tmp"
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(self._data, f, ensure_ascii=False, indent=2)
+            with open(tmp_path, "wb") as f:
+                f.write(content)
             os.replace(tmp_path, self.store_path)
         except Exception as exc:
             print(f"Warning: local mem0 memory 저장 실패: {exc}")
@@ -803,6 +841,7 @@ def create_conversation_memory_store(
     max_sessions: int = 500,
     store_path: str = "backend/data/local_memory_store.json",
     agent_id: str = "chosuninsight",
+    encryption_key: str | None = None,
 ) -> MemoryProvider:
     if provider == "mem0":
         return LocalMem0MemoryStore(
@@ -810,5 +849,6 @@ def create_conversation_memory_store(
             agent_id=agent_id,
             ttl_seconds=ttl_seconds,
             max_sessions=max_sessions,
+            encryption_key=encryption_key,
         )
     return LocalConversationMemoryStore(ttl_seconds=ttl_seconds, max_sessions=max_sessions)

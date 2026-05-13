@@ -1,4 +1,6 @@
 import os
+import hmac
+import hashlib
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -8,6 +10,8 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 JINA_API_KEY = os.getenv("JINA_API_KEY")
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "chosun-insight-secure-key-2026")
+# Secret key for session signing
+SECRET_KEY = os.getenv("SECRET_KEY", "chosun-insight-fallback-secret-2026")
 
 # Model Settings
 CHAT_MODEL_NAME = os.getenv("CHAT_MODEL_NAME", "gpt-4o-mini")
@@ -34,6 +38,7 @@ CHAT_MEMORY_MAX_SESSIONS = int(os.getenv("CHAT_MEMORY_MAX_SESSIONS", "500"))
 MEMORY_PROVIDER = os.getenv("MEMORY_PROVIDER", "mem0").strip().lower()
 MEMORY_STORE_PATH = os.getenv("MEMORY_STORE_PATH", "backend/data/local_memory_store.json")
 MEMORY_AGENT_ID = os.getenv("MEMORY_AGENT_ID", "chosuninsight")
+MEMORY_ENCRYPTION_KEY = os.getenv("MEMORY_ENCRYPTION_KEY")
 
 # Paths
 ACADEMIC_POLICY_PATH = Path(__file__).resolve().parent / "data" / "academic_policies.json"

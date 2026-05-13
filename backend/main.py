@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, status, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from typing import Any
+from uuid import UUID
 
 from backend.config import *
 from backend.models import *
@@ -40,6 +41,7 @@ conversation_memory = create_conversation_memory_store(
     max_sessions=CHAT_MEMORY_MAX_SESSIONS,
     store_path=MEMORY_STORE_PATH,
     agent_id=MEMORY_AGENT_ID,
+    encryption_key=MEMORY_ENCRYPTION_KEY,
 )
 
 
@@ -149,6 +151,13 @@ def format_memory_recall_answer(memory_context: str) -> str:
 def memory_debug_payload(session_id: str | None, enabled: bool) -> dict[str, Any] | None:
     return conversation_memory.debug_snapshot(session_id) if enabled else None
 
+
+def validate_memory_session_id(session_id: str) -> str:
+    try:
+        return str(UUID(str(session_id)))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="메모리를 찾을 수 없습니다.")
+
 # =====================================
 # 2. API Routes
 # =====================================
@@ -197,6 +206,7 @@ def rag_health():
 
 @app.get("/memory/{session_id}", status_code=status.HTTP_200_OK)
 def get_memory(session_id: str):
+    session_id = validate_memory_session_id(session_id)
     return {
         "success": True,
         "memory": conversation_memory.debug_snapshot(session_id),
@@ -204,6 +214,7 @@ def get_memory(session_id: str):
 
 @app.delete("/memory/{session_id}", status_code=status.HTTP_200_OK)
 def clear_memory(session_id: str):
+    session_id = validate_memory_session_id(session_id)
     deleted = conversation_memory.clear(session_id)
     return {
         "success": True,
@@ -213,6 +224,7 @@ def clear_memory(session_id: str):
 
 @app.delete("/memory/{session_id}/items/{memory_id}", status_code=status.HTTP_200_OK)
 def delete_memory_item(session_id: str, memory_id: str):
+    session_id = validate_memory_session_id(session_id)
     deleted = conversation_memory.delete_by_id(session_id, memory_id)
     return {
         "success": True,
@@ -363,6 +375,4 @@ def global_exception_handler(request, exc):
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"success": False, "message": "서버 내부 오류 발생", "detail": str(exc)}
-    )
-ss": False, "message": "서버 내부 오류 발생", "detail": str(exc)}
     )
