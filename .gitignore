@@ -18,3 +18,4 @@ dist/
 web_cache.json
 .serena/
 backend.log
+backend/data/local_memory_store.json

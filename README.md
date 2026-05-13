@@ -36,6 +36,10 @@
 ```env
 OPENAI_API_KEY=your_openai_api_key
 JINA_API_KEY=your_jina_api_key
+MEMORY_PROVIDER=mem0
+# MEMORY_PROVIDER=local
+# MEMORY_STORE_PATH=backend/data/local_memory_store.json
+# MEMORY_AGENT_ID=chosuninsight
 ```
 
 ### 2. 실행

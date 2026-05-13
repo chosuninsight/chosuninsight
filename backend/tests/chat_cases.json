@@ -175,5 +175,41 @@
     "question": "2009학번 컴퓨터공학과 졸업학점",
     "expected_mode": "graduation_policy",
     "must_include": ["컴퓨터공학과", "2009", "130학점"]
+  },
+  {
+    "name": "memory_correction_recall_quality",
+    "steps": [
+      {
+        "question": "나는 22학번 소웨고 전공 60학점 들었어."
+      },
+      {
+        "question": "소웨가 아니라 컴공이고 학번은 23으로 정정. 전공은 66으로 바꿔줘."
+      },
+      {
+        "question": "내가 알려준 정보 뭐야?",
+        "expected_mode": "memory_recall",
+        "must_include": ["컴퓨터공학과", "2023년", "66학점"],
+        "must_not_include": ["소프트웨어학부", "2022년", "60학점"]
+      }
+    ]
+  },
+  {
+    "name": "memory_natural_language_delete_quality",
+    "steps": [
+      {
+        "question": "나는 23학번 컴공이고 전공 66학점, 교양 40학점 들었어."
+      },
+      {
+        "question": "내 전공 학점은 기억에서 빼줘",
+        "expected_mode": "memory_delete",
+        "must_include": ["삭제"]
+      },
+      {
+        "question": "내가 알려준 정보 뭐야?",
+        "expected_mode": "memory_recall",
+        "must_include": ["컴퓨터공학과", "2023년", "교양 영역 이수학점은 40학점"],
+        "must_not_include": ["전공 영역 이수학점은 66학점"]
+      }
+    ]
   }
 ]
