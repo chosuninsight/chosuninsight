@@ -220,7 +220,7 @@ def delete_memory_item(session_id: str, memory_id: str):
         "memory": conversation_memory.debug_snapshot(session_id),
     }
 
-@app.post("/chat", response_model=ChatResponse, status_code=status.HTTP_200_OK, dependencies=[Depends(verify_api_key)])
+@app.post("/chat", response_model=ChatResponse, status_code=status.HTTP_200_OK)
 async def chat(req: ChatRequest):
     # 1. Memory and Intent Analysis
     history = req.history or []

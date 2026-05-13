@@ -72,8 +72,7 @@ export const deleteChatMemoryItem = async (sessionId, memoryId) => {
   const response = await fetch(
     `${API_BASE_URL}/memory/${encodeURIComponent(String(sessionId))}/items/${encodeURIComponent(String(memoryId))}`,
     { 
-      method: 'DELETE',
-      headers: { 'X-API-KEY': INTERNAL_API_KEY }
+      method: 'DELETE'
     }
   );
   if (!response.ok) throw new Error('메모리 항목 삭제에 실패했습니다.');
