@@ -19,3 +19,6 @@ web_cache.json
 .serena/
 backend.log
 backend/data/local_memory_store.json
+chroma_db_update
+chroma_db_store/
+
