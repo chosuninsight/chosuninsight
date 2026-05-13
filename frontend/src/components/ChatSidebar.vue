@@ -73,6 +73,9 @@
       </button>
       <div v-if="memoryOpen" class="memory-body">
         <div class="memory-actions">
+          <button v-if="memoryEnabled" class="small-icon-btn disable-btn" @click.stop="$emit('disable-memory')" title="기능 끄기">
+            <Power :size="13" />
+          </button>
           <button class="small-icon-btn" @click.stop="$emit('refresh-memory')" title="메모리 새로고침">
             <RefreshCw :size="13" />
           </button>
@@ -366,6 +369,11 @@ const memoryOpen = ref(false)
 .memory-delete:hover {
   background: #e8f3fb;
   color: #3d3d3d;
+}
+
+.disable-btn:hover {
+  background: #fde8e8 !important;
+  color: #ba5f5f !important;
 }
 
 .memory-empty {
