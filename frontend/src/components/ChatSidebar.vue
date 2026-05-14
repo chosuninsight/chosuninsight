@@ -96,14 +96,6 @@
             </button>
           </li>
         </ul>
-        <button
-          v-if="memoryEnabled && memoryItems.length > 0"
-          class="memory-clear"
-          @click.stop="$emit('clear-memory')"
-        >
-          <Trash2 :size="13" />
-          메모리 비우기
-        </button>
       </div>
     </section>
 
@@ -160,7 +152,7 @@ defineProps({
   memoryLoading: { type: Boolean, default: false },
 })
 
-defineEmits(['new-chat', 'load-chat', 'delete-chat', 'clear-all', 'refresh-memory', 'delete-memory-item', 'clear-memory', 'enable-memory'])
+defineEmits(['new-chat', 'load-chat', 'delete-chat', 'clear-all', 'refresh-memory', 'delete-memory-item', 'enable-memory', 'disable-memory'])
 
 const isExpanded = ref(false)
 const memoryOpen = ref(false)
@@ -437,24 +429,6 @@ const memoryOpen = ref(false)
   white-space: normal;
   word-break: keep-all;
   overflow-wrap: anywhere;
-}
-
-.memory-clear {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  border: none;
-  border-radius: 7px;
-  background: #f7eaea;
-  color: #ba5f5f;
-  font-size: 12px;
-  padding: 7px;
-  cursor: pointer;
-}
-
-.memory-clear:hover {
-  background: #f2dada;
 }
 
 </style>

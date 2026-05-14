@@ -13,7 +13,6 @@
       @clear-all="onClearAll"
       @refresh-memory="refreshMemory"
       @delete-memory-item="onDeleteMemoryItem"
-      @clear-memory="onClearMemory"
       @enable-memory="onEnableMemory"
       @disable-memory="onDisableMemory"
     />
@@ -285,16 +284,6 @@ async function refreshMemory() {
 async function onDeleteMemoryItem(memoryId) {
   try {
     const memory = await deleteChatMemoryItem(currentChatId.value, memoryId)
-    memoryItems.value = memory?.recent_memories || []
-    memoryEnabled.value = memory?.memory_enabled !== false
-  } catch {
-    await refreshMemory()
-  }
-}
-
-async function onClearMemory() {
-  try {
-    const memory = await clearChatMemory(currentChatId.value)
     memoryItems.value = memory?.recent_memories || []
     memoryEnabled.value = memory?.memory_enabled !== false
   } catch {
