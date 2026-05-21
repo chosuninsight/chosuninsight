@@ -336,7 +336,7 @@ async def chat(req: ChatRequest, _: str = Depends(verify_api_key)):
 
     # 4. Final Generation using LLM (Natural Language synthesis)
     # Exceptions: factual/direct modes should remain structured and must not be rewritten by the LLM.
-    if answer_mode in ["current_date", "clarifying_question", "official_fallback", "department_site_link"]:
+    if answer_mode in ["current_date", "clarifying_question", "official_fallback", "department_site_link", "student_support_portal", "faculty_profile", "graduation_policy"]:
         final_answer = context_text
     else:
         # Inject verified department site links so the LLM never has to fabricate URLs.

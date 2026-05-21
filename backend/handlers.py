@@ -94,6 +94,7 @@ DOMAIN_ROUTE_BY_FRAME = {
     ("when_is", "개강"): "academic_calendar",
     ("when_is", "종강"): "academic_calendar",
     ("general_lookup", "학사일정"): "academic_calendar",
+    ("general_lookup", "THE조아"): "student_support_portal",
     ("contact_lookup", "교수진"): "faculty",
     ("person_lookup", "교수진"): "faculty",
     ("requirement_lookup", "졸업요건"): "graduation_policy",
@@ -310,7 +311,7 @@ def build_department_site_link_answer(question: str, history: list[ChatHistoryMe
             answer_mode="department_site_link",
         )
 
-    if resolution.explicit_request:
+    if DEPARTMENT_SITE_RESOLVER.is_catalog_link_request(question):
         return StructuredAnswer(
             answer="확인된 학과/대학 사이트 링크 데이터에서 일치하는 항목을 찾지 못했습니다. 임의로 URL을 만들지 않겠습니다. 학과명이나 학부명을 정확히 입력해 주세요.",
             sources=[],
@@ -373,6 +374,28 @@ def faculty_member_matches_question(member: dict[str, Any], question: str) -> bo
     if "컴퓨터비젼" in norm_q and "컴퓨터비젼" in member_text: return True
     return any(term and term in normalize_entities(question).lower().replace("비전", "비젼") for term in faculty_field_terms(member))
 
+def has_faculty_member_name(text: str) -> bool:
+    norm_text = normalize_faculty_lookup_text(text)
+    for profile in FACULTY_PROFILES:
+        for member in profile.get("faculty", []):
+            if not isinstance(member, dict):
+                continue
+            name = normalize_faculty_lookup_text(str(member.get("name", "")))
+            if name and name in norm_text:
+                return True
+    return False
+
+def requested_faculty_name_candidate(question: str, profile: dict[str, Any]) -> str:
+    norm_q = normalize_faculty_lookup_text(question)
+    for alias in profile_aliases(profile):
+        normalized_alias = normalize_faculty_lookup_text(alias)
+        if normalized_alias:
+            norm_q = norm_q.replace(normalized_alias, "")
+    for generic in ["교수님", "교수", "전화번호", "연락처", "연구실", "어디야", "알려줘", "알려", "학과", "전공"]:
+        norm_q = norm_q.replace(normalize_faculty_lookup_text(generic), "")
+    match = re.search(r"[가-힣]{2,5}", norm_q)
+    return match.group(0) if match else ""
+
 def find_faculty_profile_for_state(state: ConversationState, question: str) -> dict[str, Any] | None:
     targets = [state.department, question]
     norm_targets = [normalize_faculty_lookup_text(t) for t in targets if t]
@@ -390,11 +413,26 @@ def find_faculty_profile_for_state(state: ConversationState, question: str) -> d
 
 def build_structured_faculty_answer(question: str, history: list[ChatHistoryMessage], state: ConversationState, interpretation: dict[str, Any] | None = None) -> StructuredAnswer | None:
     profile = find_faculty_profile_for_state(state, conversation_text(question, history))
-    if not profile or not profile.get("faculty"): return None
+    if not profile or not profile.get("faculty"):
+        norm_q = normalize_entities(question).lower()
+        if state.domain_intent == "faculty" or any(term in norm_q for term in ["교수", "교수님", "교수진"]):
+            return StructuredAnswer(
+                answer="어느 학과 교수님 연락처를 찾으시나요? 학과명이나 교수님 성함을 알려주시면 확인된 교수진/연구실 전화번호를 안내해 드릴게요.",
+                sources=[],
+                answer_mode="clarifying_question",
+            )
+        return None
     faculty = [m for m in profile["faculty"] if isinstance(m, dict)]
     norm_q = normalize_entities(question).lower()
     full_list = any(k in norm_q for k in ["교수진", "전임교수"])
     matched = [] if full_list else [m for m in faculty if faculty_member_matches_question(m, question)]
+    requested_name = requested_faculty_name_candidate(question, profile)
+    if requested_name and not matched:
+        return StructuredAnswer(
+            answer=f"확인된 교수진 데이터에서 '{requested_name}' 교수님을 찾지 못했습니다. 학과명이나 교수님 성함을 다시 확인해 주세요.",
+            sources=[profile.get("source") or "https://www.chosun.ac.kr"],
+            answer_mode="clarifying_question",
+        )
     visible = matched or faculty
     phone_q = any(k in norm_q for k in ["전화", "연락처"])
     office_q = any(k in norm_q for k in ["연구실", "위치"])
@@ -680,15 +718,28 @@ def build_conversation_state(question: str, history: list[ChatHistoryMessage], i
     # Heuristic override/fallback for specific sensitive domains
     frame = build_query_frame(question, history, interpretation)
     normalized_combined = normalize_entities(combined_text).lower().replace(" ", "")
+    normalized_question = normalize_entities(question).lower().replace(" ", "")
     has_general_ed_terms = "교양" in normalized_combined and any(term in normalized_combined for term in ["이수체계", "교육과정", "교양과정", "영역", "함께형", "기초교양", "균형교양", "융합교양"])
     has_general_credit_terms = "교양" in normalized_combined and any(term in normalized_combined for term in ["이수학점", "졸업이수학점", "몇학점"])
-    if has_general_ed_terms and cohort_year:
+
+    if "졸업요건" in normalized_question and not department:
+        domain_intent = "clarifying_question"
+        interpretation["clarification_text"] = "졸업요건은 학과와 입학년도에 따라 달라요. 학과와 학번을 알려주시면 정확히 안내해 드릴게요."
+    elif has_general_ed_terms and cohort_year:
         domain_intent = "general_education"
-    elif has_general_ed_terms and domain_intent in [None, "rag", "web_search"]:
+    elif has_general_ed_terms and not cohort_year:
         domain_intent = "clarifying_question"
         interpretation["clarification_text"] = "교양 이수 체계는 입학년도별로 달라요. 몇 학번 기준으로 안내해 드릴까요?"
     elif has_general_credit_terms and department and cohort_year:
         domain_intent = "graduation_policy"
+    elif cohort_year and department and "졸업요건" in normalized_combined:
+        domain_intent = "graduation_policy"
+    elif frame.entity == "교수진" and not department and not has_faculty_member_name(combined_text):
+        domain_intent = "clarifying_question"
+        interpretation["clarification_text"] = "어느 학과 교수님 정보를 찾으시나요? 학과명을 알려주시면 교수진/연락처 정보를 확인해 드릴게요."
+    elif frame.entity == "학사일정" and normalized_question in {"학사일정", "학사일정알려줘", "학사일정알려", "학사정보", "학사정보알려줘"}:
+        domain_intent = "clarifying_question"
+        interpretation["clarification_text"] = "어떤 학사일정을 확인할까요? 예: 기말고사, 수강신청, 성적열람, 방학 일정"
 
     if frame.entity:
         entity_config = ENTITY_CATALOG.get(frame.entity, {})

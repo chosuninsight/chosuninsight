@@ -53,6 +53,13 @@ class DepartmentSiteResolver:
         normalized = self.normalizer(str(question or "")).lower()
         return any(term.lower() in normalized for term in SITE_LINK_QUERY_TERMS)
 
+    def is_catalog_link_request(self, question: str) -> bool:
+        normalized = self._normalize(question)
+        return self.is_link_request(question) and any(
+            self._normalize(term) in normalized
+            for term in SITE_LINK_TARGET_TERMS
+        )
+
     def has_recent_link_context(self, history_text: str) -> bool:
         normalized = self.normalizer(str(history_text or "")).lower()
         return (
@@ -84,7 +91,7 @@ class DepartmentSiteResolver:
         matches = []
         for record in self.records:
             score = 0
-            if record.normalized_alias in query_text:
+            if self._alias_matches_query(record.normalized_alias, query_text, token_variants):
                 score = 1000 + len(record.normalized_alias)
             else:
                 token_scores = [
@@ -184,6 +191,19 @@ class DepartmentSiteResolver:
                 if normalized.endswith(normalized_suffix) and len(normalized) > len(normalized_suffix) + 1:
                     variants.append(normalized[:-len(normalized_suffix)])
         return [variant for variant in dict.fromkeys(variants) if variant and variant not in generic_tokens]
+
+    def _alias_matches_query(self, alias: str, query_text: str, token_variants: list[str]) -> bool:
+        if alias == query_text or alias in token_variants:
+            return True
+
+        for suffix in SITE_LINK_PARTICLE_SUFFIXES:
+            normalized_suffix = self._normalize(suffix)
+            if query_text == f"{alias}{normalized_suffix}":
+                return True
+            if f"{alias}{normalized_suffix}" in token_variants:
+                return True
+
+        return False
 
     def _normalize(self, text: str) -> str:
         normalized = self.normalizer(str(text or "")).lower()
