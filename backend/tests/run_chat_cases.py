@@ -1,21 +1,25 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import urllib.request
 from pathlib import Path
 
 
-API_URL = "http://127.0.0.1:8001/chat"
+API_BASE = os.getenv("TEST_API_BASE", "http://127.0.0.1:8001")
+API_KEY = os.getenv("INTERNAL_API_KEY", "")
 CASES_PATH = Path(__file__).with_name("chat_cases.json")
+
+_AUTH_HEADERS = {"Content-Type": "application/json", "X-Api-Key": API_KEY}
 
 
 def post_chat(payload: dict) -> dict:
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
-        API_URL,
+        f"{API_BASE}/chat",
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers=_AUTH_HEADERS,
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=60) as response:
@@ -24,7 +28,8 @@ def post_chat(payload: dict) -> dict:
 
 def clear_memory(session_id: str) -> None:
     request = urllib.request.Request(
-        f"http://127.0.0.1:8001/memory/{session_id}",
+        f"{API_BASE}/memory/{session_id}",
+        headers={"X-Api-Key": API_KEY},
         method="DELETE",
     )
     try:

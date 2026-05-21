@@ -1,7 +1,19 @@
 // src/services/api.js
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'api';
-const INTERNAL_API_KEY = 'chosun-insight-secure-key-2026';
+const INTERNAL_API_KEY = import.meta.env.VITE_INTERNAL_API_KEY || '';
+
+const authHeaders = {
+  'X-Api-Key': INTERNAL_API_KEY,
+};
+
+const toLink = (source) => {
+  if (typeof source !== 'string' || !/^https?:\/\//i.test(source)) return null;
+  return {
+    label: source.replace(/^https?:\/\//i, '').replace(/\/$/, ''),
+    url: source,
+  };
+};
 
 /**
  * 백엔드 RAG 서버와 통신하여 답변을 받아오는 함수
@@ -20,6 +32,7 @@ export const fetchChatResponse = async (question, debug = false, sessionId = nul
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders,
       },
       body: JSON.stringify({ 
         question, 
@@ -39,7 +52,7 @@ export const fetchChatResponse = async (question, debug = false, sessionId = nul
     // 백엔드 응답 구조: { success: true, documents: [...], sources: [...] }
     return {
       answer: data.answer, 
-      links: [],
+      links: (data.sources || []).map(toLink).filter(Boolean),
       suggestions: data.suggestions || [],
       debug: data.debug || null,
     };
@@ -51,7 +64,9 @@ export const fetchChatResponse = async (question, debug = false, sessionId = nul
 
 export const fetchChatMemory = async (sessionId) => {
   if (!sessionId) return null;
-  const response = await fetch(`${API_BASE_URL}/memory/${encodeURIComponent(String(sessionId))}`);
+  const response = await fetch(`${API_BASE_URL}/memory/${encodeURIComponent(String(sessionId))}`, {
+    headers: authHeaders,
+  });
   if (!response.ok) throw new Error('메모리 조회에 실패했습니다.');
   const data = await response.json();
   return data.memory || null;
@@ -61,6 +76,7 @@ export const clearChatMemory = async (sessionId) => {
   if (!sessionId) return null;
   const response = await fetch(`${API_BASE_URL}/memory/${encodeURIComponent(String(sessionId))}`, {
     method: 'DELETE',
+    headers: authHeaders,
   });
   if (!response.ok) throw new Error('메모리 삭제에 실패했습니다.');
   const data = await response.json();
@@ -71,8 +87,9 @@ export const deleteChatMemoryItem = async (sessionId, memoryId) => {
   if (!sessionId || !memoryId) return null;
   const response = await fetch(
     `${API_BASE_URL}/memory/${encodeURIComponent(String(sessionId))}/items/${encodeURIComponent(String(memoryId))}`,
-    { 
-      method: 'DELETE'
+    {
+      method: 'DELETE',
+      headers: authHeaders,
     }
   );
   if (!response.ok) throw new Error('메모리 항목 삭제에 실패했습니다.');

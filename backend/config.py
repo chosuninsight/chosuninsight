@@ -9,9 +9,11 @@ load_dotenv()
 # API Keys
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 JINA_API_KEY = os.getenv("JINA_API_KEY")
-INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "chosun-insight-secure-key-2026")
-# Secret key for session signing
-SECRET_KEY = os.getenv("SECRET_KEY", "chosun-insight-fallback-secret-2026")
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY")
+if not INTERNAL_API_KEY:
+    raise ValueError("INTERNAL_API_KEY 환경변수가 설정되지 않았습니다. .env 파일을 확인하세요.")
+# Secret key for session signing (HMAC) — reserved for future use
+SECRET_KEY = os.getenv("SECRET_KEY")
 
 # Model Settings
 CHAT_MODEL_NAME = os.getenv("CHAT_MODEL_NAME", "gpt-4o-mini")
@@ -44,6 +46,7 @@ MEMORY_ENCRYPTION_KEY = os.getenv("MEMORY_ENCRYPTION_KEY")
 ACADEMIC_POLICY_PATH = Path(__file__).resolve().parent / "data" / "academic_policies.json"
 ACADEMIC_REFERENCE_PATH = Path(__file__).resolve().parent / "data" / "academic_reference_answers.json"
 FACULTY_PROFILE_PATH = Path(__file__).resolve().parent / "data" / "faculty_profiles.json"
+DEPARTMENT_SITE_LINK_PATH = Path(__file__).resolve().parent / "data" / "department_site_links.json"
 KNOWLEDGE_STORE_PATH = Path(__file__).resolve().parent / "data" / "web_knowledge_store.json"
 CAFETERIA_DATA_PATH = Path(__file__).resolve().parent.parent / "chosun_rag_data" / "조선대학교_식단.txt"
 

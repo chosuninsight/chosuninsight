@@ -2,7 +2,18 @@
   <div class="message-row" :class="who">
     <div class="message-wrap">
       <div class="bubble">
-        <span>{{ text }}</span>
+        <span class="message-text">
+          <template v-for="(part, index) in textParts" :key="index">
+            <a
+              v-if="part.url"
+              :href="part.url"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-link"
+            >{{ part.text }}</a>
+            <span v-else>{{ part.text }}</span>
+          </template>
+        </span>
         <div v-if="links && links.length" class="link-buttons">
           <a
             v-for="link in links"
@@ -33,6 +44,8 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
+
 const props = defineProps({
   who: String,   // 'user' 또는 'bot'
   text: String,
@@ -43,6 +56,28 @@ const props = defineProps({
 })
 
 defineEmits(['suggestion-click'])
+
+const textParts = computed(() => {
+  const rawText = props.text || ''
+  const urlPattern = /https?:\/\/[^\s)\]]+/gi
+  const parts = []
+  let lastIndex = 0
+  let match
+
+  while ((match = urlPattern.exec(rawText)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({ text: rawText.slice(lastIndex, match.index) })
+    }
+    parts.push({ text: match[0], url: match[0] })
+    lastIndex = match.index + match[0].length
+  }
+
+  if (lastIndex < rawText.length) {
+    parts.push({ text: rawText.slice(lastIndex) })
+  }
+
+  return parts.length ? parts : [{ text: rawText }]
+})
 </script>
 
 <style scoped>
@@ -92,6 +127,21 @@ defineEmits(['suggestion-click'])
   color: #333;
   border: 1px solid #c2ddf5;
   border-bottom-left-radius: 4px;
+}
+
+.message-text {
+  overflow-wrap: anywhere;
+}
+
+.inline-link {
+  color: #1f6fb2;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.inline-link:hover {
+  color: #174f80;
 }
 
 .link-buttons {

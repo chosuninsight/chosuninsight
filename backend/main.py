@@ -205,7 +205,7 @@ def rag_health():
     }
 
 @app.get("/memory/{session_id}", status_code=status.HTTP_200_OK)
-def get_memory(session_id: str):
+def get_memory(session_id: str, _: str = Depends(verify_api_key)):
     session_id = validate_memory_session_id(session_id)
     return {
         "success": True,
@@ -213,7 +213,7 @@ def get_memory(session_id: str):
     }
 
 @app.delete("/memory/{session_id}", status_code=status.HTTP_200_OK)
-def clear_memory(session_id: str):
+def clear_memory(session_id: str, _: str = Depends(verify_api_key)):
     session_id = validate_memory_session_id(session_id)
     deleted = conversation_memory.clear(session_id)
     return {
@@ -223,7 +223,7 @@ def clear_memory(session_id: str):
     }
 
 @app.delete("/memory/{session_id}/items/{memory_id}", status_code=status.HTTP_200_OK)
-def delete_memory_item(session_id: str, memory_id: str):
+def delete_memory_item(session_id: str, memory_id: str, _: str = Depends(verify_api_key)):
     session_id = validate_memory_session_id(session_id)
     deleted = conversation_memory.delete_by_id(session_id, memory_id)
     return {
@@ -233,7 +233,7 @@ def delete_memory_item(session_id: str, memory_id: str):
     }
 
 @app.post("/chat", response_model=ChatResponse, status_code=status.HTTP_200_OK)
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, _: str = Depends(verify_api_key)):
     # 1. Memory and Intent Analysis
     history = req.history or []
 
@@ -335,10 +335,14 @@ async def chat(req: ChatRequest):
             suggestion_context = web_answer.suggestion_context
 
     # 4. Final Generation using LLM (Natural Language synthesis)
-    # Exceptions: current_date, clarifying_question, official_fallback should remain structured/direct
-    if answer_mode in ["current_date", "clarifying_question", "official_fallback"]:
+    # Exceptions: factual/direct modes should remain structured and must not be rewritten by the LLM.
+    if answer_mode in ["current_date", "clarifying_question", "official_fallback", "department_site_link"]:
         final_answer = context_text
     else:
+        # Inject verified department site links so the LLM never has to fabricate URLs.
+        dept_site_ctx = get_department_site_context(req.question, history)
+        if dept_site_ctx:
+            context_text = f"{context_text}\n\n{dept_site_ctx}" if context_text else dept_site_ctx
         final_answer = await get_gpt_response(req.question, context_text, history, interpretation)
     
     # Validation for empty responses or low-quality RAG
@@ -365,14 +369,18 @@ async def chat(req: ChatRequest):
     return {
         "success": True,
         "answer": append_basis_line(final_answer, answer_mode, sources),
-        "sources": [],
+        "sources": sources,
         "suggestions": [], # Disabled per user request
         "debug": debug_payload,
     }
 
 @app.exception_handler(Exception)
 def global_exception_handler(request, exc):
+    import os
+    content: dict[str, Any] = {"success": False, "message": "서버 내부 오류 발생"}
+    if os.getenv("DEBUG", "false").lower() in ("true", "1", "yes"):
+        content["detail"] = str(exc)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"success": False, "message": "서버 내부 오류 발생", "detail": str(exc)}
+        content=content,
     )

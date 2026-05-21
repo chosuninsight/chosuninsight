@@ -103,6 +103,58 @@
     "must_include": ["s.chosun.ac.kr"]
   },
   {
+    "name": "department_site_link_cs",
+    "question": "컴퓨터공학과 사이트 링크 알려줘",
+    "expected_mode": "department_site_link",
+    "must_include": ["ce.chosun.ac.kr"],
+    "must_not_include": [
+      "확인된 학과/대학 사이트 링크 데이터에서 일치하는 항목을 찾지 못했습니다",
+      "행정복지학부",
+      "소프트웨어중심대학사업단"
+    ]
+  },
+  {
+    "name": "department_site_link_no_hallucination",
+    "question": "없는학과 사이트 링크 알려줘",
+    "expected_mode": "department_site_link",
+    "must_include": ["임의로 URL을 만들지 않겠습니다"],
+    "must_not_include": ["없는학과.chosun.ac.kr"]
+  },
+  {
+    "name": "department_site_link_current_question_over_history",
+    "question": "전자공학과 사이트 알려줘",
+    "history": [
+      {
+        "role": "user",
+        "content": "컴퓨터공학과 사이트 알려줘"
+      },
+      {
+        "role": "assistant",
+        "content": "AI·SW학부(컴퓨터공학전공): https://ce.chosun.ac.kr/ce/index.do"
+      }
+    ],
+    "expected_mode": "department_site_link",
+    "must_include": ["eic.chosun.ac.kr"],
+    "must_not_include": ["ce.chosun.ac.kr", "컴퓨터공학전공"]
+  },
+  {
+    "name": "department_site_link_followup_context",
+    "question": "글로벌인문대는?",
+    "history": [
+      {
+        "role": "user",
+        "content": "컴공 사이트 알려주라"
+      },
+      {
+        "role": "assistant",
+        "content": "AI·SW학부(컴퓨터공학전공): https://ce.chosun.ac.kr/ce/index.do"
+      }
+    ],
+    "expected_mode": "department_site_link",
+    "must_include": ["gh.chosun.ac.kr"],
+    "must_not_include": ["ce.chosun.ac.kr", "제공할 수 없습니다"]
+  },
+  {
     "name": "general_ed_2023",
     "question": "23학번 교양 이수 체계 알려줘",
     "expected_mode": "general_education_2023",
