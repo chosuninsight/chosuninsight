@@ -13,3 +13,6 @@ chroma_db_store
 chroma_db_update
 chosun_rag_data
 *.log
+.pytest_cache
+.mypy_cache
+.ruff_cache

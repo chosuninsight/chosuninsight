@@ -1,12 +1,12 @@
 FROM python:3.10-slim
 
-# 수정한 1번 섹션
-RUN apt-get update && apt-get install -y \
-    unzip curl \
-    libnss3 libxss1 libasound2 \
-    libgbm-dev libgtk-3-0 libatk-bridge2.0-0 \
-    chromium chromium-driver \
+RUN apt-get -o Acquire::Retries=3 update && \
+    apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
+    curl \
+    chromium \
+    chromium-driver \
     && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # 2. 의존성 설치 (타임아웃 방지 옵션 추가)
@@ -25,8 +25,5 @@ COPY . .
 EXPOSE 8000
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
-ENV CHROME_BIN=/usr/bin/chromium
-ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
-
 # 기본 실행 명령 (docker-compose의 command 설정이 이를 덮어씌웁니다)
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
