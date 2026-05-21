@@ -41,16 +41,25 @@
           >
             <ChevronLeft :size="18" />
           </button>
-          <section class="menu-section" :style="{ gridTemplateColumns: `repeat(${currentPageItems.length}, 1fr)` }">
-            <MenuCard
-              v-for="item in currentPageItems"
-              :key="item.label"
-              :icon="item.icon"
-              :label="item.label"
-              :iconColor="item.iconColor"
-              @click="onMenuClick(item)"
-            />
-          </section>
+          <div class="menu-viewport">
+            <div class="menu-track" :style="{ transform: `translateX(-${menuPage * 100}%)` }">
+              <section
+                v-for="(page, pageIndex) in menuPages"
+                :key="pageIndex"
+                class="menu-section"
+                :style="{ gridTemplateColumns: `repeat(${page.length}, minmax(0, 1fr))` }"
+              >
+                <MenuCard
+                  v-for="item in page"
+                  :key="item.label"
+                  :icon="item.icon"
+                  :label="item.label"
+                  :iconColor="item.iconColor"
+                  @click="onMenuClick(item)"
+                />
+              </section>
+            </div>
+          </div>
           <button
             class="menu-arrow right"
             :disabled="menuPage >= totalPages - 1"
@@ -134,14 +143,26 @@ const { histories, currentChatId, createNewChat, saveCurrentChat, loadChat, load
 
 const menuPage = ref(0)
 const pageSize = 6
-const totalPages = computed(() => {
-  const pages = Math.ceil(menuItems.length / pageSize)
-  return menuItems.length % pageSize === 1 ? pages - 1 : pages
+const menuPages = computed(() => {
+  const pages = []
+  for (let i = 0; i < menuItems.length; i += pageSize) {
+    pages.push(menuItems.slice(i, i + pageSize))
+  }
+
+  const lastPage = pages[pages.length - 1]
+  if (pages.length > 1 && lastPage.length === 1) {
+    pages[pages.length - 2] = pages[pages.length - 2].concat(lastPage)
+    pages.pop()
+  }
+
+  return pages
 })
-const currentPageItems = computed(() => {
-  const start = menuPage.value * pageSize
-  if (menuPage.value === totalPages.value - 1) return menuItems.slice(start)
-  return menuItems.slice(start, start + pageSize)
+const totalPages = computed(() => menuPages.value.length)
+
+watch(totalPages, (pages) => {
+  if (menuPage.value > pages - 1) {
+    menuPage.value = Math.max(0, pages - 1)
+  }
 })
 
 // 페이지 로드 시 마지막 대화 복원, 없으면 새 대화 시작
@@ -431,10 +452,23 @@ async function scrollToBottom() {
   background: linear-gradient(270deg, rgba(248, 251, 255, 0.9), rgba(248, 251, 255, 0));
 }
 
+.menu-viewport {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.menu-track {
+  display: flex;
+  width: 100%;
+  transition: transform 0.28s ease;
+  will-change: transform;
+}
+
 .menu-section {
   display: grid;
   gap: 10px;
-  flex: 1;
+  flex: 0 0 100%;
   min-width: 0;
 }
 
