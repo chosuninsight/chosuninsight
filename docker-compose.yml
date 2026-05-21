@@ -5,7 +5,7 @@ services:
       dockerfile: ./backend/Dockerfile
     container_name: chosun_updater
     command: >
-      sh -c "rm -f /root/tmp/update_complete.flag && python update_date.py"
+      sh -c "rm -f /root/tmp/update_complete.flag && python update_date.py; touch /root/tmp/update_complete.flag"
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - ./update_date.py:/app/update_date.py
@@ -47,7 +47,6 @@ services:
       PERSIST_DIRECTORY: /app/chroma_db
       UPDATE_DB_DIRECTORY: /root/chroma_db_update
       TZ: Asia/Seoul
-      ALLOWED_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,http://localhost:9000,http://127.0.0.1:9000,http://foxibu.is-a.dev:9000,http://localhost:9001,http://127.0.0.1:9001,http://foxibu.is-a.dev:9001,https://localhost:9000,https://127.0.0.1:9000,https://foxibu.is-a.dev:9000
     depends_on:
       updater:
         condition: service_started
@@ -60,6 +59,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        VITE_INTERNAL_API_KEY: ${VITE_INTERNAL_API_KEY}
     container_name: chosun_frontend
     ports:
       - "9001:80"
