@@ -12,13 +12,23 @@ body {
   background-color: #f8fbff;
   color: #333;
   min-height: 100vh;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  -webkit-tap-highlight-color: transparent;
 }
 
 #app {
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+button,
+a {
+  touch-action: manipulation;
 }
 
 .sidebar-tooltip {

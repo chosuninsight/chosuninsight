@@ -3,7 +3,7 @@
     <div v-if="isVisible" class="consent-banner">
       <div class="consent-content">
         <div class="icon-wrap">
-          <BrainCircuit :size="24" class="brain-icon" />
+          <BrainCircuit :size="24" class="brain-icon" aria-hidden="true" />
         </div>
         <div class="text-wrap">
           <h4 class="title">개인화 메모리 기능을 사용하시겠습니까?</h4>
@@ -13,8 +13,8 @@
           </p>
         </div>
         <div class="action-wrap">
-          <button class="btn deny" @click="handleResponse(false)">나중에</button>
-          <button class="btn allow" @click="handleResponse(true)">허용하기</button>
+          <button class="btn deny" type="button" @click="handleResponse(false)">나중에</button>
+          <button class="btn allow" type="button" @click="handleResponse(true)">허용하기</button>
         </div>
       </div>
     </div>
@@ -39,8 +39,10 @@ onMounted(() => {
 })
 
 const handleResponse = (allowed) => {
-  const status = allowed ? 'granted' : 'denied'
-  localStorage.setItem('chosun_memory_consent', status)
+  const status = allowed ? 'granted' : 'deferred'
+  if (allowed) {
+    localStorage.setItem('chosun_memory_consent', status)
+  }
   isVisible.value = false
   emit('consent-updated', status)
   
@@ -116,7 +118,7 @@ const handleResponse = (allowed) => {
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color 0.2s, color 0.2s;
   border: none;
   white-space: nowrap;
 }
@@ -139,10 +141,15 @@ const handleResponse = (allowed) => {
   background: #e2e8f0;
 }
 
+.btn:focus-visible {
+  outline: 2px solid #2e86de;
+  outline-offset: 2px;
+}
+
 /* 애니메이션 */
 .slide-down-enter-active,
 .slide-down-leave-active {
-  transition: all 0.4s ease-out;
+  transition: transform 0.4s ease-out, opacity 0.4s ease-out;
 }
 
 .slide-down-enter-from,
@@ -165,6 +172,14 @@ const handleResponse = (allowed) => {
   
   .btn {
     flex: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slide-down-enter-active,
+  .slide-down-leave-active,
+  .btn {
+    transition-duration: 0.01ms;
   }
 }
 </style>

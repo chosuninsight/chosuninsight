@@ -4,13 +4,16 @@
     <div class="sidebar-top">
       <button
         class="icon-btn toggle-btn"
+        type="button"
         ref="toggleBtnRef"
+        :aria-label="isExpanded ? '사이드바 닫기' : '사이드바 열기'"
+        :aria-expanded="isExpanded"
         @click="isExpanded = !isExpanded"
         @mouseenter="onToggleEnter"
         @mouseleave="tooltipVisible = false"
       >
-        <PanelLeftClose v-if="isExpanded" :size="18" />
-        <PanelLeftOpen v-else :size="18" />
+        <PanelLeftClose v-if="isExpanded" :size="18" aria-hidden="true" />
+        <PanelLeftOpen v-else :size="18" aria-hidden="true" />
       </button>
 
       <Teleport to="body">
@@ -24,12 +27,14 @@
       </Teleport>
       <button
         class="icon-btn"
+        type="button"
         ref="newChatBtnRef"
+        aria-label="새 채팅"
         @click="$emit('new-chat')"
         @mouseenter="onNewChatEnter"
         @mouseleave="newChatTooltipVisible = false"
       >
-        <SquarePen :size="18" />
+        <SquarePen :size="18" aria-hidden="true" />
         <span v-if="isExpanded" class="btn-label">새 채팅</span>
       </button>
 
@@ -53,37 +58,50 @@
         :key="item.id"
         class="history-item"
         :class="{ active: item.id === currentChatId }"
-        @click="$emit('load-chat', item.id)"
       >
-        <span v-if="isExpanded" class="history-title">{{ item.title }}</span>
-        <button v-if="isExpanded" class="delete-btn" @click.stop="$emit('delete-chat', item.id)">
-          <Trash2 :size="14" />
+        <button
+          v-if="isExpanded"
+          type="button"
+          class="history-load-btn"
+          :aria-current="item.id === currentChatId ? 'true' : undefined"
+          @click="$emit('load-chat', item.id)"
+        >
+          <span class="history-title">{{ item.title }}</span>
+        </button>
+        <button
+          v-if="isExpanded"
+          type="button"
+          class="delete-btn"
+          :aria-label="`${item.title} 삭제`"
+          @click.stop="$emit('delete-chat', item.id)"
+        >
+          <Trash2 :size="14" aria-hidden="true" />
         </button>
       </li>
     </ul>
 
     <section v-if="isExpanded" class="memory-panel">
-      <button class="memory-toggle" @click.stop="memoryOpen = !memoryOpen">
+      <button class="memory-toggle" type="button" :aria-expanded="memoryOpen" @click.stop="memoryOpen = !memoryOpen">
         <span class="memory-title">
-          <Brain :size="14" />
+          <Brain :size="14" aria-hidden="true" />
           메모리
         </span>
-        <ChevronDown v-if="memoryOpen" :size="14" />
-        <ChevronRight v-else :size="14" />
+        <ChevronDown v-if="memoryOpen" :size="14" aria-hidden="true" />
+        <ChevronRight v-else :size="14" aria-hidden="true" />
       </button>
       <div v-if="memoryOpen" class="memory-body">
         <div class="memory-actions">
-          <button v-if="memoryEnabled" class="small-icon-btn disable-btn" @click.stop="$emit('disable-memory')" title="기능 끄기">
-            <Power :size="13" />
+          <button v-if="memoryEnabled" class="small-icon-btn disable-btn" type="button" @click.stop="$emit('disable-memory')" title="기능 끄기" aria-label="메모리 기능 끄기">
+            <Power :size="13" aria-hidden="true" />
           </button>
-          <button class="small-icon-btn" @click.stop="$emit('refresh-memory')" title="메모리 새로고침">
-            <RefreshCw :size="13" />
+          <button class="small-icon-btn" type="button" @click.stop="$emit('refresh-memory')" title="메모리 새로고침" aria-label="메모리 새로고침">
+            <RefreshCw :size="13" aria-hidden="true" />
           </button>
         </div>
         <p v-if="memoryLoading" class="memory-empty">불러오는 중</p>
         <div v-else-if="!memoryEnabled" class="memory-disabled-wrap">
           <p class="memory-empty">비활성화됨</p>
-          <button class="memory-enable-btn" @click.stop="$emit('enable-memory')">
+          <button class="memory-enable-btn" type="button" @click.stop="$emit('enable-memory')">
             기능 켜기
           </button>
         </div>
@@ -91,8 +109,8 @@
         <ul v-else class="memory-list">
           <li v-for="item in memoryItems" :key="item.id" class="memory-item">
             <span class="memory-text">{{ item.text }}</span>
-            <button class="memory-delete" @click.stop="$emit('delete-memory-item', item.id)" title="메모리 삭제">
-              <X :size="13" />
+            <button class="memory-delete" type="button" @click.stop="$emit('delete-memory-item', item.id)" title="메모리 삭제" aria-label="메모리 삭제">
+              <X :size="13" aria-hidden="true" />
             </button>
           </li>
         </ul>
@@ -101,8 +119,8 @@
 
     <!-- 하단: 전체 삭제 -->
     <div v-if="histories.length > 0 && isExpanded" class="sidebar-bottom">
-      <button class="icon-btn clear-btn" @click="$emit('clear-all')">
-        <Trash2 :size="15" />
+      <button class="icon-btn clear-btn" type="button" @click="$emit('clear-all')">
+        <Trash2 :size="15" aria-hidden="true" />
         <span v-if="isExpanded" class="btn-label">대화 목록 비우기</span>
       </button>
     </div>
@@ -236,9 +254,7 @@ const memoryOpen = ref(false)
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px;
   border-radius: 8px;
-  cursor: pointer;
   white-space: nowrap;
   min-width: 0;
 }
@@ -249,6 +265,17 @@ const memoryOpen = ref(false)
 
 .history-item.active {
   background: #e4f1fb;
+}
+
+.history-load-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 8px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
 }
 
 .history-title {
@@ -274,6 +301,17 @@ const memoryOpen = ref(false)
   transition: opacity 0.15s;
 }
 
+.icon-btn:focus-visible,
+.delete-btn:focus-visible,
+.history-load-btn:focus-visible,
+.memory-toggle:focus-visible,
+.small-icon-btn:focus-visible,
+.memory-enable-btn:focus-visible,
+.memory-delete:focus-visible {
+  outline: 2px solid #2e86de;
+  outline-offset: 2px;
+}
+
 .history-item:hover .delete-btn {
   opacity: 1;
 }
@@ -281,6 +319,10 @@ const memoryOpen = ref(false)
 .delete-btn:hover {
   color: #e05a5a;
   background: #fde8e8;
+}
+
+.delete-btn:focus-visible {
+  opacity: 1;
 }
 
 .sidebar-bottom {
@@ -391,7 +433,7 @@ const memoryOpen = ref(false)
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color 0.2s, color 0.2s, border-color 0.2s;
 }
 
 .memory-enable-btn:hover {

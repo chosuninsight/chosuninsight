@@ -35,11 +35,13 @@
         <div class="menu-strip">
           <button
             class="menu-arrow left"
+            type="button"
             :disabled="menuPage === 0"
             @click.stop="goToPrevMenuPage"
             title="이전 메뉴"
+            aria-label="이전 메뉴"
           >
-            <ChevronLeft :size="18" />
+            <ChevronLeft :size="18" aria-hidden="true" />
           </button>
           <div class="menu-viewport">
             <div class="menu-track" :style="{ transform: `translateX(-${menuPage * 100}%)` }">
@@ -62,27 +64,32 @@
           </div>
           <button
             class="menu-arrow right"
+            type="button"
             :disabled="menuPage >= totalPages - 1"
             @click.stop="goToNextMenuPage"
             title="다음 메뉴"
+            aria-label="다음 메뉴"
           >
-            <ChevronRight :size="18" />
+            <ChevronRight :size="18" aria-hidden="true" />
           </button>
         </div>
         <div class="menu-dots">
-          <span
+          <button
             v-for="i in totalPages"
             :key="i"
+            type="button"
             class="dot-btn"
             :class="{ active: menuPage === i - 1 }"
+            :aria-label="`${i}번째 메뉴 페이지 보기`"
+            :aria-current="menuPage === i - 1 ? 'true' : undefined"
             @click="menuPage = i - 1"
-          />
+          ></button>
         </div>
       </div>
 
       <!-- 채팅 메시지 영역 -->
       <section class="chat-section">
-        <div class="chat-scroll" ref="chatBox">
+        <div class="chat-scroll" ref="chatBox" role="log" aria-live="polite" aria-relevant="additions text">
           <ChatMessage
             v-for="(msg, index) in messages"
             :key="index"
@@ -95,12 +102,12 @@
             @suggestion-click="sendSuggestedMessage"
           />
           <!-- 로딩 애니메이션 -->
-          <div v-if="isLoading" class="message-row bot">
+          <div v-if="isLoading" class="message-row bot" aria-label="답변 작성 중">
             <div class="message-wrap">
               <div class="bubble loading-bubble">
-                <span class="dot"></span>
-                <span class="dot"></span>
-                <span class="dot"></span>
+                <span class="dot" aria-hidden="true"></span>
+                <span class="dot" aria-hidden="true"></span>
+                <span class="dot" aria-hidden="true"></span>
               </div>
             </div>
           </div>
@@ -115,12 +122,15 @@
             v-model="inputText"
             class="chat-input"
             type="text"
-            placeholder="질문을 입력하세요."
+            name="chat-question"
+            autocomplete="off"
+            aria-label="질문 입력"
+            placeholder="질문을 입력하세요…"
             @keyup.enter="sendMessage"
             :disabled="isLoading"
           />
-          <button class="send-btn" @click="sendMessage" :disabled="isLoading">
-            <ArrowUp :size="18" />
+          <button class="send-btn" type="button" @click="sendMessage" :disabled="isLoading" aria-label="메시지 보내기">
+            <ArrowUp :size="18" aria-hidden="true" />
           </button>
         </div>
       </section>
@@ -217,6 +227,7 @@ function onLoadChat(id) {
 }
 
 function onDeleteChat(id) {
+  if (!window.confirm('이 대화를 삭제할까요?')) return
   const wasCurrentChat = deleteChat(id)
   if (wasCurrentChat) messages.value = createNewChat()
   clearChatMemory(id).catch(() => {})
@@ -224,6 +235,7 @@ function onDeleteChat(id) {
 }
 
 function onClearAll() {
+  if (!window.confirm('모든 대화 목록을 비울까요?')) return
   histories.value.forEach(item => clearChatMemory(item.id).catch(() => {}))
   clearAll()
   messages.value = createNewChat()
@@ -284,9 +296,16 @@ async function submitMessage(text) {
 }
 
 async function refreshMemory() {
+  if (localStorage.getItem('chosun_memory_consent') !== 'granted') {
+    memoryItems.value = []
+    memoryEnabled.value = false
+    memoryLoading.value = false
+    return
+  }
+
   if (!currentChatId.value) {
     memoryItems.value = []
-    memoryEnabled.value = true
+    memoryEnabled.value = false
     return
   }
   memoryLoading.value = true
@@ -296,13 +315,14 @@ async function refreshMemory() {
     memoryEnabled.value = memory?.memory_enabled !== false
   } catch {
     memoryItems.value = []
-    memoryEnabled.value = true
+    memoryEnabled.value = localStorage.getItem('chosun_memory_consent') === 'granted'
   } finally {
     memoryLoading.value = false
   }
 }
 
 async function onDeleteMemoryItem(memoryId) {
+  if (!window.confirm('이 메모리를 삭제할까요?')) return
   try {
     const memory = await deleteChatMemoryItem(currentChatId.value, memoryId)
     memoryItems.value = memory?.recent_memories || []
@@ -431,27 +451,6 @@ async function scrollToBottom() {
   gap: 8px;
 }
 
-.menu-strip::before,
-.menu-strip::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 28px;
-  pointer-events: none;
-  z-index: 1;
-}
-
-.menu-strip::before {
-  left: 40px;
-  background: linear-gradient(90deg, rgba(248, 251, 255, 0.9), rgba(248, 251, 255, 0));
-}
-
-.menu-strip::after {
-  right: 40px;
-  background: linear-gradient(270deg, rgba(248, 251, 255, 0.9), rgba(248, 251, 255, 0));
-}
-
 .menu-viewport {
   flex: 1;
   min-width: 0;
@@ -493,6 +492,13 @@ async function scrollToBottom() {
   color: #3e7fac;
 }
 
+.menu-arrow:focus-visible,
+.dot-btn:focus-visible,
+.send-btn:focus-visible {
+  outline: 2px solid #2e86de;
+  outline-offset: 2px;
+}
+
 .menu-arrow:disabled {
   opacity: 0.35;
   cursor: default;
@@ -505,6 +511,8 @@ async function scrollToBottom() {
 }
 
 .dot-btn {
+  border: 0;
+  padding: 0;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -612,10 +620,16 @@ async function scrollToBottom() {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
+.input-card:focus-within {
+  border-color: #6aabdf;
+  box-shadow: 0 0 0 3px rgba(106, 171, 223, 0.18);
+}
+
 .chat-input {
   flex: 1;
   border: none;
-  outline: none;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   font-size: 14px;
   font-family: inherit;
   background: transparent;
@@ -672,6 +686,19 @@ async function scrollToBottom() {
   .chat-section {
     min-height: 320px;
     flex: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-track,
+  .menu-arrow,
+  .dot-btn,
+  .send-btn {
+    transition-duration: 0.01ms;
+  }
+
+  .dot {
+    animation: none;
   }
 }
 

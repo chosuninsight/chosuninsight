@@ -144,6 +144,14 @@ const textParts = computed(() => {
   color: #174f80;
 }
 
+.inline-link:focus-visible,
+.link-btn:focus-visible,
+.suggestion-btn:focus-visible,
+.debug-panel summary:focus-visible {
+  outline: 2px solid #2e86de;
+  outline-offset: 2px;
+}
+
 .link-buttons {
   display: flex;
   flex-wrap: wrap;
