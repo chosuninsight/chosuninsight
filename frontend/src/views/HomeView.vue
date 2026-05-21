@@ -455,6 +455,8 @@ async function scrollToBottom() {
   flex: 1;
   min-width: 0;
   overflow: hidden;
+  padding: 6px 0 4px;
+  margin: -6px 0 -4px;
 }
 
 .menu-track {
