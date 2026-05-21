@@ -58,41 +58,43 @@ class LocalConversationMemoryStore(MemoryProvider):
         self.max_sessions = max_sessions
         self._sessions: dict[str, ConversationMemory] = {}
         self._disabled_sessions: set[str] = set()
+        self._lock = threading.RLock()
 
     def build_context(self, session_id: str | None, question: str | None = None) -> str:
-        session_key = self._normalize_session_id(session_id)
-        if not session_key or session_key in self._disabled_sessions:
-            return ""
+        with self._lock:
+            session_key = self._normalize_session_id(session_id)
+            if not session_key or session_key in self._disabled_sessions:
+                return ""
 
-        memory = self._sessions.get(session_key)
-        if not memory or self._is_expired(memory):
-            self._sessions.pop(session_key, None)
-            return ""
+            memory = self._sessions.get(session_key)
+            if not memory or self._is_expired(memory):
+                self._sessions.pop(session_key, None)
+                return ""
 
-        facts = memory.facts
-        parts = []
-        if facts.get("department"):
-            parts.append(f"학과/전공은 {facts['department']}")
-        if facts.get("cohort_year"):
-            parts.append(f"입학연도는 {facts['cohort_year']}년")
-        if facts.get("topic"):
-            parts.append(f"최근 관심 주제는 {facts['topic']}")
+            facts = memory.facts
+            parts = []
+            if facts.get("department"):
+                parts.append(f"학과/전공은 {facts['department']}")
+            if facts.get("cohort_year"):
+                parts.append(f"입학연도는 {facts['cohort_year']}년")
+            if facts.get("topic"):
+                parts.append(f"최근 관심 주제는 {facts['topic']}")
 
-        credit_progress = facts.get("credit_progress") or {}
-        if isinstance(credit_progress, dict):
-            credit_parts = [
-                f"{area} {credits}학점"
-                for area, credits in credit_progress.items()
-                if area and credits
-            ]
-            if credit_parts:
-                parts.append(f"이수학점은 {', '.join(credit_parts)}")
+            credit_progress = facts.get("credit_progress") or {}
+            if isinstance(credit_progress, dict):
+                credit_parts = [
+                    f"{area} {credits}학점"
+                    for area, credits in credit_progress.items()
+                    if area and credits
+                ]
+                if credit_parts:
+                    parts.append(f"이수학점은 {', '.join(credit_parts)}")
 
-        if not parts:
-            return ""
+            if not parts:
+                return ""
 
-        memory.updated_at = time.time()
-        return "이전 대화에서 사용자가 알려준 정보: " + "; ".join(parts) + "."
+            memory.updated_at = time.time()
+            return "이전 대화에서 사용자가 알려준 정보: " + "; ".join(parts) + "."
 
     def update(
         self,
@@ -102,114 +104,121 @@ class LocalConversationMemoryStore(MemoryProvider):
         state: Any,
         answer: str | None = None,
     ) -> None:
-        session_key = self._normalize_session_id(session_id)
-        if not session_key or session_key in self._disabled_sessions:
-            return
+        with self._lock:
+            session_key = self._normalize_session_id(session_id)
+            if not session_key or session_key in self._disabled_sessions:
+                return
 
-        self._prune()
-        memory = self._sessions.setdefault(session_key, ConversationMemory())
-        facts = memory.facts
+            self._prune()
+            memory = self._sessions.setdefault(session_key, ConversationMemory())
+            facts = memory.facts
 
-        department = str((interpretation or {}).get("department", "") or "").strip()
-        department = department or str(getattr(state, "department", "") or "").strip()
-        if department:
-            facts["department"] = department
+            department = str((interpretation or {}).get("department", "") or "").strip()
+            department = department or str(getattr(state, "department", "") or "").strip()
+            if department:
+                facts["department"] = department
 
-        cohort_year = getattr(state, "cohort_year", None)
-        if cohort_year:
-            facts["cohort_year"] = cohort_year
+            cohort_year = getattr(state, "cohort_year", None)
+            if cohort_year:
+                facts["cohort_year"] = cohort_year
 
-        topic = str((interpretation or {}).get("topic", "") or "").strip()
-        if topic and topic != "other":
-            facts["topic"] = topic
+            topic = str((interpretation or {}).get("topic", "") or "").strip()
+            if topic and topic != "other":
+                facts["topic"] = topic
 
-        credit_progress = self._extract_credit_progress(interpretation)
-        if credit_progress:
-            existing = facts.setdefault("credit_progress", {})
-            if isinstance(existing, dict):
-                existing.update(credit_progress)
-            else:
-                facts["credit_progress"] = credit_progress
+            credit_progress = self._extract_credit_progress(interpretation)
+            if credit_progress:
+                existing = facts.setdefault("credit_progress", {})
+                if isinstance(existing, dict):
+                    existing.update(credit_progress)
+                else:
+                    facts["credit_progress"] = credit_progress
 
-        facts["last_question"] = question[:300]
-        memory.updated_at = time.time()
+            facts["last_question"] = question[:300]
+            memory.updated_at = time.time()
 
     def debug_snapshot(self, session_id: str | None) -> dict[str, Any]:
-        session_key = self._normalize_session_id(session_id)
-        memory = self._sessions.get(session_key) if session_key else None
-        if not memory:
-            return {"memory_enabled": session_key not in self._disabled_sessions} if session_key else {}
-        return {
-            "session_id": session_key,
-            "memory_enabled": session_key not in self._disabled_sessions,
-            "facts": dict(memory.facts),
-            "updated_at": memory.updated_at,
-        }
+        with self._lock:
+            session_key = self._normalize_session_id(session_id)
+            memory = self._sessions.get(session_key) if session_key else None
+            if not memory:
+                return {"memory_enabled": session_key not in self._disabled_sessions} if session_key else {}
+            return {
+                "session_id": session_key,
+                "memory_enabled": session_key not in self._disabled_sessions,
+                "facts": dict(memory.facts),
+                "updated_at": memory.updated_at,
+            }
 
     def clear(self, session_id: str | None) -> int:
-        session_key = self._normalize_session_id(session_id)
-        if not session_key:
-            return 0
-        memory = self._sessions.pop(session_key, None)
-        return len(memory.facts) if memory else 0
+        with self._lock:
+            session_key = self._normalize_session_id(session_id)
+            if not session_key:
+                return 0
+            memory = self._sessions.pop(session_key, None)
+            return len(memory.facts) if memory else 0
 
     def set_enabled(self, session_id: str | None, enabled: bool) -> None:
-        session_key = self._normalize_session_id(session_id)
-        if not session_key:
-            return
-        if enabled:
-            self._disabled_sessions.discard(session_key)
-        else:
-            self._disabled_sessions.add(session_key)
+        with self._lock:
+            session_key = self._normalize_session_id(session_id)
+            if not session_key:
+                return
+            if enabled:
+                self._disabled_sessions.discard(session_key)
+            else:
+                self._disabled_sessions.add(session_key)
 
     def is_enabled(self, session_id: str | None) -> bool:
-        session_key = self._normalize_session_id(session_id)
-        return bool(session_key) and session_key not in self._disabled_sessions
+        with self._lock:
+            session_key = self._normalize_session_id(session_id)
+            return bool(session_key) and session_key not in self._disabled_sessions
 
     def delete_matching(self, session_id: str | None, question: str) -> int:
-        session_key = self._normalize_session_id(session_id)
-        memory = self._sessions.get(session_key) if session_key else None
-        if not memory:
-            return 0
+        with self._lock:
+            session_key = self._normalize_session_id(session_id)
+            memory = self._sessions.get(session_key) if session_key else None
+            if not memory:
+                return 0
 
-        categories = self._deletion_categories(question)
-        if not categories:
-            return 0
+            categories = self._deletion_categories(question)
+            if not categories:
+                return 0
 
-        deleted = 0
-        for category in categories:
-            if category == "credit_progress" and isinstance(memory.facts.get("credit_progress"), dict):
-                deleted += len(memory.facts["credit_progress"])
-                memory.facts.pop("credit_progress", None)
-            elif category in memory.facts:
-                memory.facts.pop(category, None)
-                deleted += 1
-        if deleted:
-            memory.updated_at = time.time()
-        return deleted
+            deleted = 0
+            for category in categories:
+                if category == "credit_progress" and isinstance(memory.facts.get("credit_progress"), dict):
+                    deleted += len(memory.facts["credit_progress"])
+                    memory.facts.pop("credit_progress", None)
+                elif category in memory.facts:
+                    memory.facts.pop(category, None)
+                    deleted += 1
+            if deleted:
+                memory.updated_at = time.time()
+            return deleted
 
     def delete_by_id(self, session_id: str | None, memory_id: str) -> int:
-        session_key = self._normalize_session_id(session_id)
-        memory = self._sessions.get(session_key) if session_key else None
-        if not memory or not memory_id:
-            return 0
+        with self._lock:
+            session_key = self._normalize_session_id(session_id)
+            memory = self._sessions.get(session_key) if session_key else None
+            if not memory or not memory_id:
+                return 0
 
-        key_map = {
-            "department:major": "department",
-            "cohort_year:admission": "cohort_year",
-        }
-        fact_key = key_map.get(memory_id)
-        if fact_key and fact_key in memory.facts:
-            memory.facts.pop(fact_key, None)
-            memory.updated_at = time.time()
-            return 1
-        if memory_id.startswith("credit_progress:") and isinstance(memory.facts.get("credit_progress"), dict):
-            area = memory_id.split(":", 1)[1]
-            if area in memory.facts["credit_progress"]:
-                memory.facts["credit_progress"].pop(area, None)
+            key_map = {
+                "department:major": "department",
+                "cohort_year:admission": "cohort_year",
+            }
+            fact_key = key_map.get(memory_id)
+            if fact_key and fact_key in memory.facts:
+                memory.facts.pop(fact_key, None)
                 memory.updated_at = time.time()
                 return 1
-        return 0
+            if memory_id.startswith("credit_progress:") and isinstance(memory.facts.get("credit_progress"), dict):
+                area = memory_id.split(":", 1)[1]
+                if area in memory.facts["credit_progress"]:
+                    memory.facts["credit_progress"].pop(area, None)
+                    memory.updated_at = time.time()
+                    return 1
+            return 0
 
     def _extract_credit_progress(self, interpretation: dict[str, Any] | None) -> dict[str, int]:
         progress_items = (interpretation or {}).get("credit_progress", [])

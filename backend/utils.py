@@ -8,9 +8,7 @@ try:
 except ImportError:
     from backports.zoneinfo import ZoneInfo
 
-from backend.config import QUERY_EXPANSION_RULES, KNOWLEDGE_STORE_PATH, SECRET_KEY
-import hmac
-import hashlib
+from backend.config import QUERY_EXPANSION_RULES, KNOWLEDGE_STORE_PATH
 from backend.models import IndexedDocument, StructuredAnswer
 from rag_pipeline import normalize_entities
 
@@ -211,15 +209,3 @@ def find_in_web_knowledge(question: str) -> StructuredAnswer | None:
         print(f"ERROR: Failed to lookup web knowledge: {e}")
     return None
 
-def generate_session_signature(session_id: str) -> str:
-    return hmac.new(
-        SECRET_KEY.encode(),
-        session_id.encode(),
-        hashlib.sha256
-    ).hexdigest()
-
-def verify_session_signature(session_id: str, signature: str) -> bool:
-    if not session_id or not signature:
-        return False
-    expected = generate_session_signature(session_id)
-    return hmac.compare_digest(expected, signature)
