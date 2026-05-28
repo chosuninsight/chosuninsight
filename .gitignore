@@ -1,0 +1,24 @@
+
+# Secrets — never commit
+.env
+
+venv/
+env/
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+.python-version
+
+node_modules/
+dist/
+.codex
+web_cache.json
+.serena/
+backend.log
+backend/data/local_memory_store.json
+chroma_db_update
+chroma_db_store/
+
