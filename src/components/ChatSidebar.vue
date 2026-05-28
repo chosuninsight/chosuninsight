@@ -129,7 +129,7 @@
 
 <script setup>
 import { ref } from 'vue'
-import { PanelLeftOpen, PanelLeftClose, SquarePen, Trash2, Brain, RefreshCw, X, ChevronDown, ChevronRight } from 'lucide-vue-next'
+import { PanelLeftOpen, PanelLeftClose, SquarePen, Trash2, Brain, RefreshCw, X, ChevronDown, ChevronRight, Power } from 'lucide-vue-next'
 
 const toggleBtnRef = ref(null)
 const tooltipVisible = ref(false)
@@ -164,7 +164,7 @@ function onNewChatEnter() {
 
 defineProps({
   histories: { type: Array, required: true },
-  currentChatId: { type: Number, default: null },
+  currentChatId: { type: [Number, String], default: null },
   memoryItems: { type: Array, default: () => [] },
   memoryEnabled: { type: Boolean, default: true },
   memoryLoading: { type: Boolean, default: false },
