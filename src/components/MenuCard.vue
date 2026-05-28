@@ -1,6 +1,6 @@
 <template>
-  <button class="menu-card" @click="$emit('click', label)">
-    <component :is="icon" class="icon" :size="24" :color="iconColor" />
+  <button class="menu-card" type="button" @click="$emit('click', label)">
+    <component :is="icon" class="icon" :size="24" :color="iconColor" aria-hidden="true" />
     <span class="label">{{ label }}</span>
   </button>
 </template>
@@ -38,6 +38,11 @@ defineEmits(['click'])
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.13);
 }
 
+.menu-card:focus-visible {
+  outline: 2px solid #2e86de;
+  outline-offset: 2px;
+}
+
 .icon {
   flex-shrink: 0;
 }
@@ -46,5 +51,27 @@ defineEmits(['click'])
   font-size: 13px;
   color: #333;
   font-weight: 500;
+}
+
+@media (max-width: 480px) {
+  .menu-card {
+    width: 90px;
+    min-width: 90px;
+    flex-shrink: 0;
+  }
+
+  .label {
+    font-size: 11px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-card {
+    transition-duration: 0.01ms;
+  }
+
+  .menu-card:hover {
+    transform: none;
+  }
 }
 </style>

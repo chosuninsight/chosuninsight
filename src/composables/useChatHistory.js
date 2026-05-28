@@ -28,7 +28,10 @@ function getTimeString() {
 
 // 새 대화 시작 — ID를 세팅하고 초기 메시지 배열 반환
 function createNewChat() {
-  const id = Date.now()
+  const id = typeof crypto !== 'undefined' && crypto.randomUUID 
+    ? crypto.randomUUID() 
+    : Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+
   currentChatId.value = id
   localStorage.setItem(CURRENT_ID_KEY, String(id))
   return [{ who: 'bot', text: '안녕하세요! 조선대학교에 대해 궁금한 점을 물어보세요.', time: getTimeString() }]
@@ -71,7 +74,7 @@ function loadChat(id) {
 
 // 마지막으로 열었던 대화 복원
 function loadLastChat() {
-  const lastId = Number(localStorage.getItem(CURRENT_ID_KEY))
+  const lastId = localStorage.getItem(CURRENT_ID_KEY)
   if (!lastId) return null
   return loadChat(lastId)
 }
