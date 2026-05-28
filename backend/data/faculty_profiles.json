@@ -1,0 +1,98 @@
+[
+  {
+    "department": "컴퓨터공학과",
+    "display_department": "AI·SW학부(컴퓨터공학전공)",
+    "college": "IT융합대학",
+    "aliases": ["컴퓨터공학과", "컴퓨터공학전공", "컴공", "AI·SW학부 컴퓨터공학전공"],
+    "source": "조선대학교 AI·SW학부(컴퓨터공학전공) 전임교수",
+    "source_url": "https://eie.chosun.ac.kr/ce/5662/subview.do",
+    "faculty": [
+      {"name": "김판구", "position": "교수", "phone": "7636", "office": "IT-7111", "field": "정보검색, 자연어처리"},
+      {"name": "모상만", "position": "교수", "phone": "6032", "office": "IT-7105", "field": "모바일 컴퓨팅"},
+      {"name": "신석주", "position": "교수", "phone": "6030", "office": "IT-7119", "field": "이동통신, WSN, CPS, Network Security"},
+      {"name": "정현숙", "position": "교수", "phone": "7307", "office": "IT-7120", "field": ""},
+      {"name": "강문수", "position": "교수", "phone": "7475", "office": "IT-7125", "field": ""},
+      {"name": "양희덕", "position": "교수", "phone": "7474", "office": "IT-10106", "field": ""},
+      {"name": "심재홍", "position": "부교수", "phone": "6039", "office": "IT-7106", "field": "임베디드소스트웨어, 실시간시스템"},
+      {"name": "정호엽", "position": "부교수", "phone": "7100", "office": "IT-10128(컴퓨터 비젼 연구실)", "field": "컴퓨터비젼"},
+      {"name": "김성기", "position": "부교수", "phone": "7094", "office": "IT-10119", "field": "혼합현실, 그래픽스, GPU, 모바일 장치"},
+      {"name": "전찬준", "position": "조교수", "phone": "7736", "office": "IT-10120(멀티미디어컴퓨팅 연구실)", "field": "음성 신호처리"},
+      {"name": "안드레스 카세레스", "position": "조교수", "phone": "062-230-7473", "office": "IT-7112", "field": "Sensors localization and tracking, Smart Healthcare"},
+      {"name": "임철기", "position": "조교수", "phone": "7697", "office": "IT-10112", "field": "뇌공학-AI"},
+      {"name": "김 원", "position": "조교수", "phone": "6033", "office": "IT-10125", "field": "인간-컴퓨터 상호작용(HCI), HCI+AI"}
+    ]
+  },
+  {
+    "department": "인공지능공학과",
+    "display_department": "AI·SW학부(인공지능공학전공)",
+    "college": "IT융합대학",
+    "aliases": ["인공지능공학과", "인공지능공학전공", "인공지능학과", "AI공학과", "AI·SW학부 인공지능공학전공"],
+    "source": "조선대학교 AI·SW학부(인공지능공학전공) 교수소개",
+    "source_url": "https://eie.chosun.ac.kr/aie/7974/subview.do",
+    "faculty": [
+      {"name": "김판구", "position": "겸임교수", "phone": "7636", "office": "IT-7111", "field": ""},
+      {"name": "변재영", "position": "겸임교수", "phone": "7021", "office": "IT-8119", "field": ""},
+      {"name": "양희덕", "position": "겸임교수", "phone": "7474", "office": "IT-10106", "field": ""},
+      {"name": "전찬준", "position": "겸임교수", "phone": "7736", "office": "IT-10120", "field": ""},
+      {"name": "김원열", "position": "조교수", "phone": "7762", "office": "IT-4227", "field": ""},
+      {"name": "최규호", "position": "조교수", "phone": "7763", "office": "IT-4126", "field": ""},
+      {"name": "김대호", "position": "조교수", "phone": "7698", "office": "IT-10111", "field": ""}
+    ]
+  },
+  {
+    "department": "전자공학과",
+    "display_department": "전자공학과",
+    "college": "IT융합대학",
+    "aliases": ["전자공학과", "전자공학전공"],
+    "source": "IT융합대학_학과5개.txt",
+    "faculty": [
+      {"name": "고낙용", "position": "교수", "phone": "062-230-7108", "office": "지능로봇실험실 6122호 / 교수실 IT융합대학 6층 6120호", "field": "지능로봇"},
+      {"name": "이진이", "position": "교수", "phone": "062-230-7101", "office": "센서디바이스 응용실험실 6114호 / 교수실 IT융합대학 6층 6112호", "field": "센서디바이스 응용"},
+      {"name": "반성범", "position": "교수", "phone": "062-230-6897", "office": "영상처리 및 임베디드시스템 실험실 6109호 / 교수실 IT융합대학 6층 6110호", "field": "영상처리, 임베디드시스템"},
+      {"name": "이충규", "position": "교수", "phone": "062-230-7320", "office": "통신시스템실험실 9117호 / 교수실 IT융합대학 9층 9119호", "field": "통신시스템"},
+      {"name": "곽근창", "position": "교수", "phone": "062-230-6086", "office": "로봇시청각 및 생체정보처리 실험실 6228호 / 교수실 IT융합대학 6층 6226호", "field": "로봇시청각, 생체정보처리"}
+    ]
+  },
+  {
+    "department": "건축학과",
+    "display_department": "건축학과(5년제)",
+    "college": "",
+    "aliases": ["건축학과", "건축학전공", "건축학과(5년제)"],
+    "source": "조선대학교 건축학과(5년제).txt",
+    "faculty": [
+      {"name": "김인호", "position": "교수, 학과장", "phone": "", "office": "", "field": "건축설계"},
+      {"name": "염대봉", "position": "교수", "phone": "", "office": "", "field": "도시계획 및 도시설계"},
+      {"name": "신웅주", "position": "교수", "phone": "", "office": "", "field": "건축역사, 국가유산, 건축자산"},
+      {"name": "김경원", "position": "교수", "phone": "", "office": "", "field": "건축설계"},
+      {"name": "김용춘", "position": "교수", "phone": "", "office": "", "field": "건축설계"},
+      {"name": "강형주", "position": "부교수", "phone": "", "office": "", "field": ""}
+    ]
+  },
+  {
+    "department": "소방재난관리학과",
+    "display_department": "소방재난관리학과",
+    "college": "자연과학·공공보건안전대학",
+    "aliases": ["소방재난관리학과", "소방재난관리"],
+    "source": "조선대학교 소방재난관리학과.txt",
+    "faculty": [
+      {"name": "배승용", "position": "부교수", "phone": "6637", "office": "자연과학공공보건안전대학 1층 1802", "field": "열 및 유체전공, 화재현상분석, 피난설계 등"},
+      {"name": "박상용", "position": "조교수", "phone": "6638", "office": "자연과학공공보건안전대학 1층 1218", "field": "전력 계통 해석 및 보호, 소방 에너지 효율 및 안전성 개선, 고전압 및 아크 플라즈마"},
+      {"name": "이윤하", "position": "조교수", "phone": "7772", "office": "자연과학공공보건안전대학 1803호", "field": "도시방재, GIS, 건축소방"},
+      {"name": "오륜석", "position": "조교수", "phone": "7773", "office": "자연과학공공보건안전대학 1217호", "field": "소방공학, 화재위험평가, 성능위주설계, 화재·피난시뮬레이션, 인간피난행동"}
+    ]
+  },
+  {
+    "department": "첨단에너지공학과",
+    "display_department": "첨단에너지공학과",
+    "college": "",
+    "aliases": ["첨단에너지공학과", "첨단에너지"],
+    "source": "조선대학교 첨단에너지공학과.txt",
+    "faculty": [
+      {"name": "강성승", "position": "교수(겸임)", "phone": "7112", "office": "충격파에너지응용실험실", "field": "첨단소재개발, 탄소성공학, 에너지열역학, 고전압충격파"},
+      {"name": "장일식", "position": "교수", "phone": "7111", "office": "저탄소에너지시스템 연구실", "field": "가스에너지, 디지털가스필드공학, 에너지생산공학, 온실가스저감공학"},
+      {"name": "박철현", "position": "교수", "phone": "7238", "office": "폐기물 에너지 & 재활용 연구실", "field": "폐기물에너지, 폐자원재활용, 고도선별공학, 고형폐기물연료화"},
+      {"name": "박준규", "position": "교수", "phone": "7119", "office": "바이오에너지공학실험실", "field": "바이오에너지, 환경에너지공학, 수처리공학"},
+      {"name": "김종국", "position": "조교수", "phone": "7118", "office": "이차전지실험실", "field": "이차전지, 수소연료전지"}
+    ]
+  }
+]

@@ -1,0 +1,273 @@
+[
+  {
+    "name": "current_date_direct_answer",
+    "question": "오늘 날짜",
+    "expected_mode": "current_date",
+    "must_include": ["오늘 날짜는", "년", "월", "일", "한국 시간 기준"],
+    "must_not_include": ["확인된 자료"]
+  },
+  {
+    "name": "festival_requires_official_fallback",
+    "question": "조선대학교 축제 언제야?",
+    "expected_mode": "official_fallback",
+    "must_include": ["축제", "공식"]
+  },
+  {
+    "name": "faculty_fulltime",
+    "question": "컴퓨터공학과 전임교수 알려줘",
+    "expected_mode": "faculty_profile",
+    "must_include": ["컴퓨터공학", "김판구"]
+  },
+  {
+    "name": "faculty_name_office",
+    "question": "컴퓨터공학과 김판구 교수님 연구실 어디야?",
+    "expected_mode": "faculty_profile",
+    "must_include": ["김판구", "IT-7111"]
+  },
+  {
+    "name": "faculty_name_phone",
+    "question": "컴퓨터공학과 김판구 교수님 연락처 알려줘",
+    "expected_mode": "faculty_profile",
+    "must_include": ["김판구", "전화", "7636"]
+  },
+  {
+    "name": "faculty_field",
+    "question": "컴퓨터비젼 전공 교수님 알려줘",
+    "expected_mode": "faculty_profile",
+    "must_include": ["정호엽"]
+  },
+  {
+    "name": "faculty_electronics",
+    "question": "전자공학과 교수진 알려줘",
+    "expected_mode": "faculty_profile",
+    "must_include": ["전자공학과", "고낙용"]
+  },
+  {
+    "name": "faculty_electronics_name",
+    "question": "전자공학과 고낙용 교수님 연구실 어디야?",
+    "expected_mode": "faculty_profile",
+    "must_include": ["고낙용", "6122"]
+  },
+  {
+    "name": "faculty_architecture",
+    "question": "건축학과 교수진 알려줘",
+    "expected_mode": "faculty_profile",
+    "must_include": ["건축학과", "김인호"]
+  },
+  {
+    "name": "faculty_field_without_department",
+    "question": "소방공학 전공 교수님 알려줘",
+    "expected_mode": "faculty_profile",
+    "must_include": ["오륜석", "7773"]
+  },
+  {
+    "name": "lifelong_advisor_counseling_route",
+    "question": "평생지도교수 상담 어떻게 신청해?",
+    "expected_mode": "student_support_portal",
+    "must_include": ["THE조아", "지도교수"]
+  },
+  {
+    "name": "thechoa_route",
+    "question": "THE조아 주소 뭐야?",
+    "expected_mode": "student_support_portal",
+    "must_include": ["thechoa.chosun.ac.kr"]
+  },
+  {
+    "name": "calendar_final_exam",
+    "question": "이번 학기 기말고사 기간 알려줘",
+    "expected_mode": "academic_calendar_2026",
+    "must_include": ["2026", "6월"]
+  },
+  {
+    "name": "calendar_date_lookup",
+    "question": "6월 19일 학사정보 알려줘",
+    "expected_mode": "academic_calendar_2026",
+    "must_include": ["기말고사"]
+  },
+  {
+    "name": "calendar_fall_midterm",
+    "question": "2학기 중간고사 언제야?",
+    "expected_mode": "academic_calendar_2026",
+    "must_include": ["2026", "10월"]
+  },
+  {
+    "name": "calendar_fall_course_registration",
+    "question": "2학기 수강신청 언제야?",
+    "expected_mode": "academic_calendar_2026",
+    "must_include": ["2026", "8월"]
+  },
+  {
+    "name": "calendar_grade_view",
+    "question": "성적 확인 언제 가능해?",
+    "expected_mode": "academic_calendar_2026",
+    "must_include": ["성적", "열람"]
+  },
+  {
+    "name": "course_registration_route",
+    "question": "수강신청 어디서 해?",
+    "expected_mode": "student_support_portal",
+    "must_include": ["s.chosun.ac.kr"]
+  },
+  {
+    "name": "department_site_link_cs",
+    "question": "컴퓨터공학과 사이트 링크 알려줘",
+    "expected_mode": "department_site_link",
+    "must_include": ["ce.chosun.ac.kr"],
+    "must_not_include": [
+      "확인된 학과/대학 사이트 링크 데이터에서 일치하는 항목을 찾지 못했습니다",
+      "행정복지학부",
+      "소프트웨어중심대학사업단"
+    ]
+  },
+  {
+    "name": "department_site_link_no_hallucination",
+    "question": "없는학과 사이트 링크 알려줘",
+    "expected_mode": "department_site_link",
+    "must_include": ["임의로 URL을 만들지 않겠습니다"],
+    "must_not_include": ["없는학과.chosun.ac.kr"]
+  },
+  {
+    "name": "department_site_link_current_question_over_history",
+    "question": "전자공학과 사이트 알려줘",
+    "history": [
+      {
+        "role": "user",
+        "content": "컴퓨터공학과 사이트 알려줘"
+      },
+      {
+        "role": "assistant",
+        "content": "AI·SW학부(컴퓨터공학전공): https://ce.chosun.ac.kr/ce/index.do"
+      }
+    ],
+    "expected_mode": "department_site_link",
+    "must_include": ["eic.chosun.ac.kr"],
+    "must_not_include": ["ce.chosun.ac.kr", "컴퓨터공학전공"]
+  },
+  {
+    "name": "department_site_link_followup_context",
+    "question": "글로벌인문대는?",
+    "history": [
+      {
+        "role": "user",
+        "content": "컴공 사이트 알려주라"
+      },
+      {
+        "role": "assistant",
+        "content": "AI·SW학부(컴퓨터공학전공): https://ce.chosun.ac.kr/ce/index.do"
+      }
+    ],
+    "expected_mode": "department_site_link",
+    "must_include": ["gh.chosun.ac.kr"],
+    "must_not_include": ["ce.chosun.ac.kr", "제공할 수 없습니다"]
+  },
+  {
+    "name": "general_ed_2023",
+    "question": "23학번 교양 이수 체계 알려줘",
+    "expected_mode": "general_education_2023",
+    "must_include": ["30학점"]
+  },
+  {
+    "name": "general_ed_followup",
+    "question": "함께형교양 말고 다른건?",
+    "history": [
+      {"role": "user", "content": "23학번 교양 이수 체계 알려줘"},
+      {"role": "assistant", "content": "2023학년도 이후 교양 이수 체계는 총 30학점입니다."}
+    ],
+    "expected_mode": "general_education_2023",
+    "must_not_include": ["- 함께형교양"]
+  },
+  {
+    "name": "cs_general_credit_2023",
+    "question": "2023학년 컴퓨터공학과 교양 이수학점",
+    "expected_mode": "graduation_policy",
+    "must_include": ["컴퓨터공학과", "30학점"]
+  },
+  {
+    "name": "grad_followup_general_credit",
+    "question": "교양 이수학점은?",
+    "history": [
+      {"role": "user", "content": "2023학년 컴퓨터공학과 졸업요건 알려줘"},
+      {"role": "assistant", "content": "컴퓨터공학과 2023학년도 이후 입학생 기준입니다."}
+    ],
+    "expected_mode": "graduation_policy",
+    "must_include": ["컴퓨터공학과", "30학점"]
+  },
+  {
+    "name": "library_rag",
+    "question": "도서관 이용 방법 알려줘",
+    "expected_mode": "rag",
+    "must_include": ["도서관"]
+  },
+  {
+    "name": "clarify_graduation_department",
+    "question": "졸업요건 알려줘",
+    "expected_mode": "clarifying_question",
+    "must_include": ["학과"]
+  },
+  {
+    "name": "clarify_general_education_cohort",
+    "question": "교양 이수 체계 알려줘",
+    "expected_mode": "clarifying_question",
+    "must_include": ["학번"]
+  },
+  {
+    "name": "clarify_faculty_department",
+    "question": "교수님 연락처 알려줘",
+    "expected_mode": "clarifying_question",
+    "must_include": ["학과"]
+  },
+  {
+    "name": "clarify_calendar_event",
+    "question": "학사일정 알려줘",
+    "expected_mode": "clarifying_question",
+    "must_include": ["어떤", "일정"]
+  },
+  {
+    "name": "grad_policy_2018",
+    "question": "2018학번 컴퓨터공학과 졸업학점",
+    "expected_mode": "graduation_policy",
+    "must_include": ["컴퓨터공학과", "2018", "140학점"]
+  },
+  {
+    "name": "grad_policy_2009",
+    "question": "2009학번 컴퓨터공학과 졸업학점",
+    "expected_mode": "graduation_policy",
+    "must_include": ["컴퓨터공학과", "2009", "130학점"]
+  },
+  {
+    "name": "memory_correction_recall_quality",
+    "steps": [
+      {
+        "question": "나는 22학번 소웨고 전공 60학점 들었어."
+      },
+      {
+        "question": "소웨가 아니라 컴공이고 학번은 23으로 정정. 전공은 66으로 바꿔줘."
+      },
+      {
+        "question": "내가 알려준 정보 뭐야?",
+        "expected_mode": "memory_recall",
+        "must_include": ["컴퓨터공학과", "2023년", "66학점"],
+        "must_not_include": ["소프트웨어학부", "2022년", "60학점"]
+      }
+    ]
+  },
+  {
+    "name": "memory_natural_language_delete_quality",
+    "steps": [
+      {
+        "question": "나는 23학번 컴공이고 전공 66학점, 교양 40학점 들었어."
+      },
+      {
+        "question": "내 전공 학점은 기억에서 빼줘",
+        "expected_mode": "memory_delete",
+        "must_include": ["삭제"]
+      },
+      {
+        "question": "내가 알려준 정보 뭐야?",
+        "expected_mode": "memory_recall",
+        "must_include": ["컴퓨터공학과", "2023년", "교양 영역 이수학점은 40학점"],
+        "must_not_include": ["전공 영역 이수학점은 66학점"]
+      }
+    ]
+  }
+]
