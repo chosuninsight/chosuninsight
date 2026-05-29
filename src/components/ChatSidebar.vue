@@ -81,30 +81,35 @@
     </ul>
 
     <section v-if="isExpanded" class="memory-panel">
-      <button class="memory-toggle" type="button" :aria-expanded="memoryOpen" @click.stop="memoryOpen = !memoryOpen">
-        <span class="memory-title">
-          <Brain :size="14" aria-hidden="true" />
-          메모리
-        </span>
-        <ChevronDown v-if="memoryOpen" :size="14" aria-hidden="true" />
-        <ChevronRight v-else :size="14" aria-hidden="true" />
-      </button>
+      <div class="memory-header-row">
+        <button class="memory-toggle" type="button" :aria-expanded="memoryOpen" @click.stop="memoryOpen = !memoryOpen">
+          <span class="memory-title">
+            <Brain :size="14" aria-hidden="true" />
+            메모리
+          </span>
+          <ChevronDown v-if="memoryOpen" :size="14" aria-hidden="true" />
+          <ChevronRight v-else :size="14" aria-hidden="true" />
+        </button>
+        <button
+          class="memory-switch"
+          type="button"
+          :class="{ on: memoryEnabled }"
+          @click.stop="memoryEnabled ? $emit('disable-memory') : $emit('enable-memory')"
+          :aria-label="memoryEnabled ? '메모리 끄기' : '메모리 켜기'"
+          :title="memoryEnabled ? '메모리 끄기' : '메모리 켜기'"
+          :aria-pressed="memoryEnabled"
+        >
+          <span class="switch-thumb"></span>
+        </button>
+      </div>
       <div v-if="memoryOpen" class="memory-body">
         <div class="memory-actions">
-          <button v-if="memoryEnabled" class="small-icon-btn disable-btn" type="button" @click.stop="$emit('disable-memory')" title="기능 끄기" aria-label="메모리 기능 끄기">
-            <Power :size="13" aria-hidden="true" />
-          </button>
           <button class="small-icon-btn" type="button" @click.stop="$emit('refresh-memory')" title="메모리 새로고침" aria-label="메모리 새로고침">
             <RefreshCw :size="13" aria-hidden="true" />
           </button>
         </div>
         <p v-if="memoryLoading" class="memory-empty">불러오는 중</p>
-        <div v-else-if="!memoryEnabled" class="memory-disabled-wrap">
-          <p class="memory-empty">비활성화됨</p>
-          <button class="memory-enable-btn" type="button" @click.stop="$emit('enable-memory')">
-            기능 켜기
-          </button>
-        </div>
+        <p v-else-if="!memoryEnabled" class="memory-empty">비활성화됨</p>
         <p v-else-if="memoryItems.length === 0" class="memory-empty">저장된 메모리 없음</p>
         <ul v-else class="memory-list">
           <li v-for="item in memoryItems" :key="item.id" class="memory-item">
@@ -129,7 +134,7 @@
 
 <script setup>
 import { ref } from 'vue'
-import { PanelLeftOpen, PanelLeftClose, SquarePen, Trash2, Brain, RefreshCw, X, ChevronDown, ChevronRight, Power } from 'lucide-vue-next'
+import { PanelLeftOpen, PanelLeftClose, SquarePen, Trash2, Brain, RefreshCw, X, ChevronDown, ChevronRight } from 'lucide-vue-next'
 
 const toggleBtnRef = ref(null)
 const tooltipVisible = ref(false)
@@ -306,7 +311,7 @@ const memoryOpen = ref(false)
 .history-load-btn:focus-visible,
 .memory-toggle:focus-visible,
 .small-icon-btn:focus-visible,
-.memory-enable-btn:focus-visible,
+.memory-switch:focus-visible,
 .memory-delete:focus-visible {
   outline: 2px solid #2e86de;
   outline-offset: 2px;
@@ -347,12 +352,19 @@ const memoryOpen = ref(false)
   gap: 8px;
 }
 
+.memory-header-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .memory-toggle {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   border: none;
   background: transparent;
   color: #52616f;
@@ -363,6 +375,44 @@ const memoryOpen = ref(false)
 
 .memory-toggle:hover {
   background: #e8f3fb;
+}
+
+.memory-switch {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  background: #cdd8e0;
+  border-radius: 9px;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.memory-switch.on {
+  background: #3b82f6;
+}
+
+.memory-switch:hover {
+  opacity: 0.85;
+}
+
+.switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.2s;
+  pointer-events: none;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.18);
+}
+
+.memory-switch.on .switch-thumb {
+  transform: translateX(14px);
 }
 
 .memory-body {
@@ -405,41 +455,11 @@ const memoryOpen = ref(false)
   color: #3d3d3d;
 }
 
-.disable-btn:hover {
-  background: #fde8e8 !important;
-  color: #ba5f5f !important;
-}
-
 .memory-empty {
   color: #9aa7b2;
   font-size: 12px;
   margin: 0;
   padding: 4px;
-}
-
-.memory-disabled-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 4px;
-}
-
-.memory-enable-btn {
-  background: #e1efff;
-  color: #3b82f6;
-  border: 1px solid #c8e1ff;
-  border-radius: 6px;
-  padding: 6px;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background-color 0.2s, color 0.2s, border-color 0.2s;
-}
-
-.memory-enable-btn:hover {
-  background: #3b82f6;
-  color: white;
-  border-color: #3b82f6;
 }
 
 .memory-list {
