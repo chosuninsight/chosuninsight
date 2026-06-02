@@ -30,7 +30,7 @@
         type="button"
         ref="newChatBtnRef"
         aria-label="새 채팅"
-        @click="$emit('new-chat')"
+        @click="isExpanded = false; $emit('new-chat')"
         @mouseenter="onNewChatEnter"
         @mouseleave="newChatTooltipVisible = false"
       >

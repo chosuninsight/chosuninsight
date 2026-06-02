@@ -227,4 +227,11 @@ const textParts = computed(() => {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+@media (max-width: 480px) {
+  .link-btn {
+    max-width: 100%;
+    word-break: break-all;
+  }
+}
 </style>

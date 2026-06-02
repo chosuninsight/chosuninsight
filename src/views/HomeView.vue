@@ -24,9 +24,13 @@
         <img :src="introImg" alt="인트로 이미지" class="intro-img" />
         <section class="intro">
           <p class="intro-sub">안녕하세요. <strong>조선인사이트</strong>는 조선대학교 AI 통합 행정 안내 서비스입니다.<br>
-        학교소개·학사안내·대학생활 관련 정보 검색을 도와드려요.<br>
-    일부 내용은 챗봇에서 바로 안내하기 어려울 수 있으며, 관련 정보는 아래 메뉴의 바로가기 링크를 통해 확인하실 수 있어요.<br>
-    챗봇 답변은 참고용으로, 중요한 사항은 학교 홈페이지 공지사항·답변의 출처·링크·관련 부서를 통해 다시 확인해 주세요.</p>
+            학교소개·학사안내·대학생활 관련 정보 검색을 도와드려요.<template v-if="!isNarrow || introExpanded"><br>
+            일부 내용은 챗봇에서 바로 안내하기 어려울 수 있으며, 관련 정보는 아래 메뉴의 바로가기 링크를 통해 확인하실 수 있어요.<br>
+            챗봇 답변은 참고용으로, 중요한 사항은 학교 홈페이지 공지사항·답변의 출처·링크·관련 부서를 통해 다시 확인해 주세요.</template>
+          </p>
+          <button v-if="isNarrow" class="intro-toggle" @click="introExpanded = !introExpanded">
+            {{ introExpanded ? '접기 ▲' : '펼쳐보기 ▼' }}
+          </button>
         </section>
       </div>
 
@@ -182,6 +186,12 @@ const messages = ref(_restored ?? createNewChat())
 const inputText = ref('')
 const chatBox = ref(null)
 const isLoading = ref(false)
+const introExpanded = ref(false)
+const isNarrow = ref(window.innerWidth > 480 && window.innerWidth <= 570)
+
+function onResize() {
+  isNarrow.value = window.innerWidth > 480 && window.innerWidth <= 570
+}
 const memoryItems = ref([])
 const memoryEnabled = ref(localStorage.getItem('chosun_memory_consent') === 'granted')
 const memoryLoading = ref(false)
@@ -199,10 +209,12 @@ const handleConsentUpdate = (event) => {
 
 onMounted(() => {
   window.addEventListener('chosun-memory-consent-updated', handleConsentUpdate)
+  window.addEventListener('resize', onResize)
 })
 
 onUnmounted(() => {
   window.removeEventListener('chosun-memory-consent-updated', handleConsentUpdate)
+  window.removeEventListener('resize', onResize)
 })
 
 function now() {
@@ -436,6 +448,19 @@ async function scrollToBottom() {
 .intro-sub {
   font-size: 14px;
   color: #666;
+}
+
+.intro-toggle {
+  display: block;
+  margin-top: 6px;
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #6aabdf;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
 }
 
 .menu-carousel {
