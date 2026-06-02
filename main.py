@@ -1,6 +1,5 @@
-# ✅ FastAPI + ChromaDB + GPT 연결 (최종)
-
 import os
+import re
 
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel
@@ -16,7 +15,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # =====================================
-# 🔥 환경변수 추가 (요청사항 반영)
+# 환경변수
 # =====================================
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 CHAT_MODEL_NAME = os.getenv("CHAT_MODEL_NAME", "gpt-4o-mini")
@@ -27,7 +26,7 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "jhgan/ko-sroberta-multitask")
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # =====================================
-# 1. FastAPI 기본 설정
+# FastAPI
 # =====================================
 app = FastAPI(title="Chosun RAG API")
 
@@ -40,7 +39,7 @@ app.add_middleware(
 )
 
 # =====================================
-# 2. 요청 / 응답 모델
+# 요청/응답 모델
 # =====================================
 class ChatRequest(BaseModel):
     question: str
@@ -51,7 +50,7 @@ class ChatResponse(BaseModel):
     sources: list
 
 # =====================================
-# 3. ChromaDB 연결 (env 적용)
+# ChromaDB 연결
 # =====================================
 embeddings = HuggingFaceEmbeddings(
     model_name=EMBEDDING_MODEL
@@ -66,42 +65,105 @@ vectorstore = Chroma(
 print("📦 DB 데이터 개수:", vectorstore._collection.count())
 
 # =====================================
-# 🔥 4. 검색 함수 (유사도 필터링 추가)
+# 전화번호 관련 키워드
+# =====================================
+PHONE_KEYWORDS = [
+    "전화번호",
+    "연락처",
+    "번호",
+    "학과실",
+    "학과사무실",
+    "사무실",
+    "교학팀"
+]
+
+def is_phone_question(question: str):
+    return any(keyword in question for keyword in PHONE_KEYWORDS)
+
+# =====================================
+# 전화번호 문서 찾기
+# =====================================
+def find_phone_info(results):
+
+    phone_pattern = r'062-\d{3,4}-\d{4}'
+
+    for doc, score in results:
+
+        text = doc.page_content
+
+        if "전화번호" in text:
+            return text
+
+        if re.search(phone_pattern, text):
+            return text
+
+    return None
+
+# =====================================
+# 학과명 추출
+# =====================================
+def extract_department(results):
+
+    keywords = [
+        "학과",
+        "학부",
+        "전공",
+        "교학팀"
+    ]
+
+    for doc, score in results:
+
+        text = doc.page_content
+
+        lines = text.split("\n")
+
+        for line in lines:
+
+            for keyword in keywords:
+
+                if keyword in line:
+                    return line.strip()
+
+    return None
+
+# =====================================
+# 검색 함수
 # =====================================
 def search_docs(query: str):
+
     if not query.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="질문이 비어 있습니다."
         )
 
-    # 🔥 핵심 변경 (score 포함)
-    results = vectorstore.similarity_search_with_score(query, k=3)
+    k = 10 if is_phone_question(query) else 5
 
-    threshold = 0.5
-    docs, sources = [], []
+    results = vectorstore.similarity_search_with_score(
+        query,
+        k=k
+    )
+
+    threshold = 0.8
+
+    docs = []
+    sources = []
 
     for doc, score in results:
+
         if score < threshold:
             docs.append(doc.page_content)
             sources.append(doc.metadata.get("source", ""))
 
-    # ❌ 필터링 후 없음
-    if not docs:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="검색 결과가 없습니다."
-        )
-
-    return docs, sources
+    return docs, sources, results
 
 # =====================================
-# 🔥 5. GPT 응답 함수 추가
+# GPT 응답
 # =====================================
 async def get_gpt_response(question, context):
+
     prompt = f"""
-너는 조선대학교 정보 도우미야.
-아래 정보를 기반으로 질문에 답변해.
+너는 조선대학교 정보 도우미이다.
 
 [참고 정보]
 {context}
@@ -110,50 +172,146 @@ async def get_gpt_response(question, context):
 {question}
 
 [규칙]
-- 정보 없으면 "해당 정보를 찾을 수 없습니다"라고 답해
-- 한국어로 답변
+
+1. 참고 정보에 있는 내용만 사용한다.
+2. 추측하지 않는다.
+3. 교수명, 학과명, 교학팀을 혼동하지 않는다.
+4. 참고 정보에 답이 없으면 반드시 아래 한 문장만 출력한다.
+
+정보없음
+
+5. 한국어로 답변한다.
 """
 
     response = await client.chat.completions.create(
-        model=CHAT_MODEL_NAME,  # 🔥 환경변수 적용
+        model=CHAT_MODEL_NAME,
         messages=[
-            {"role": "system", "content": "조선대학교 정보 챗봇"},
-            {"role": "user", "content": prompt}
+            {
+                "role": "system",
+                "content": "조선대학교 정보 챗봇"
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
         ]
     )
 
     return response.choices[0].message.content
 
 # =====================================
-# 6. API
+# 기본 API
 # =====================================
-
-@app.get("/", status_code=status.HTTP_200_OK)
+@app.get("/")
 def root():
     return {
         "success": True,
         "message": "RAG 서버 실행 중"
     }
 
-# 🔥 챗봇 API (GPT 연결됨)
+# =====================================
+# 챗봇 API
+# =====================================
 @app.post(
     "/chat",
-    response_model=ChatResponse,
-    status_code=status.HTTP_200_OK
+    response_model=ChatResponse
 )
 async def chat(req: ChatRequest):
 
-    docs, sources = search_docs(req.question)
+    question = req.question
 
-    context = "\n".join(docs)
+    docs, sources, raw_results = search_docs(question)
+
+    # ==================================================
+    # 1. 전화번호 질문이면 전화번호 문서 우선 반환
+    # ==================================================
+    if is_phone_question(question):
+
+        phone_info = find_phone_info(raw_results)
+
+        if phone_info:
+
+            return {
+                "success": True,
+                "answer": phone_info,
+                "sources": sources
+            }
+
+    # ==================================================
+    # 2. 검색 결과 없음
+    # ==================================================
+    if not docs:
+
+        dept = extract_department(raw_results)
+
+        phone_results = vectorstore.similarity_search_with_score(
+            question + " 학과실 전화번호",
+            k=10
+        )
+
+        phone_info = find_phone_info(phone_results)
+
+        if phone_info:
+
+            return {
+                "success": True,
+                "answer":
+                    "관련 정보를 찾을 수 없습니다.\n\n"
+                    "정확한 내용은 아래 학과실로 문의해 주세요.\n\n"
+                    + phone_info,
+                "sources": []
+            }
+
+        return {
+            "success": True,
+            "answer": "관련 정보를 찾을 수 없습니다.",
+            "sources": []
+        }
+
+    # ==================================================
+    # 3. GPT 응답 생성
+    # ==================================================
+    context = "\n\n".join(docs)
 
     try:
-        answer = await get_gpt_response(req.question, context)
-    except Exception as e:
+
+        answer = await get_gpt_response(
+            question,
+            context
+        )
+
+    except Exception:
+
         raise HTTPException(
             status_code=500,
             detail="GPT 응답 생성 실패"
         )
+
+    # ==================================================
+    # 4. GPT가 답변 못함
+    # ==================================================
+    if answer.strip() == "정보없음":
+
+        phone_results = vectorstore.similarity_search_with_score(
+            question + " 학과실 전화번호",
+            k=10
+        )
+
+        phone_info = find_phone_info(phone_results)
+
+        if phone_info:
+
+            answer = (
+                "현재 챗봇이 해당 정보를 제공할 수 없습니다.\n\n"
+                "정확한 확인을 위해 학과실로 문의해 주세요.\n\n"
+                f"{phone_info}"
+            )
+        else:
+
+            answer = (
+                "현재 챗봇이 해당 정보를 제공할 수 없습니다.\n"
+                "관련 학과실 또는 교학팀으로 문의해 주세요."
+            )
 
     return {
         "success": True,
@@ -162,10 +320,11 @@ async def chat(req: ChatRequest):
     }
 
 # =====================================
-# 7. 글로벌 에러 처리
+# 글로벌 에러 처리
 # =====================================
 @app.exception_handler(Exception)
 def global_exception_handler(request, exc):
+
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
@@ -178,3 +337,4 @@ def global_exception_handler(request, exc):
 # =====================================
 # 실행
 # uvicorn main:app --reload
+# =====================================
