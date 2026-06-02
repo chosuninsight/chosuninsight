@@ -68,6 +68,6 @@ class QueryFrame:
 @dataclass(frozen=True)
 class StructuredAnswer:
     answer: str
-    sources: list[str]
+    sources: list  # URL 문자열 또는 {"title","url"} 객체의 혼합 리스트
     answer_mode: str
     suggestion_context: str = ""

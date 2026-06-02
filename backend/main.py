@@ -1,3 +1,4 @@
+import time
 from fastapi import FastAPI, HTTPException, status, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -295,13 +296,22 @@ async def chat(req: ChatRequest, _: str = Depends(verify_api_key)):
             "debug": {"answer_mode": "memory_recall", "memory": memory_debug} if req.debug else None,
         }
     
+    # 단계별 지연 계측 (5초 목표 진단용). debug 요청 시 응답에 포함되고, 항상 로그로 출력된다.
+    timings: dict[str, int] = {}
+    _pipeline_start = time.perf_counter()
+
     # LLM-driven interpretation (Domain, Slots, Topic)
+    _t = time.perf_counter()
     interpretation = await interpret_chat_request(req.question, history)
+    timings["interpret_ms"] = round((time.perf_counter() - _t) * 1000)
+
+    _t = time.perf_counter()
     state = build_conversation_state(req.question, history, interpretation)
-    
+
     # 2. Hybrid-RAG Pipeline (Primary Path)
     # Get high-accuracy context from structured data or traditional RAG
     structured_data = build_structured_domain_answer(req.question, history, state, interpretation)
+    timings["route_ms"] = round((time.perf_counter() - _t) * 1000)
     context_text = ""
     answer_mode = "rag"
     sources = []
@@ -315,19 +325,22 @@ async def chat(req: ChatRequest, _: str = Depends(verify_api_key)):
     else:
         # Fallback to vector search if no structured handler matched
         search_query = interpretation.get("standalone_question") or req.question
+        _t = time.perf_counter()
         search_result = search_docs(search_query)
+        timings["rag_search_ms"] = round((time.perf_counter() - _t) * 1000)
         if search_result.hits:
             context_text = "\n".join(hit.content for hit in search_result.hits)
             answer_mode = "rag"
             sources = [hit.source for hit in search_result.hits]
 
     # 3. Web Search Fallback
-    is_realtime_query = interpretation.get("is_realtime_required", False)
-    # Priority: Structured > Web Search (if realtime/missing) > RAG
-    # We only call Web Search if context is empty, OR domain is explicitly web_search,
-    # OR it's a realtime query that hasn't found a structured/official answer yet.
-    if not context_text or state.domain_intent == "web_search" or (is_realtime_query and answer_mode == "rag"):
+    # 5초 목표: RAG/정형이 컨텍스트를 찾았으면 느린 웹검색(수십 초)을 생략하고 RAG로 답한다.
+    # RAG 데이터는 updater가 매일 갱신되므로, 컨텍스트가 '완전히 비었을 때'만 웹검색으로 폴백한다.
+    # (domain==web_search라도 RAG가 답을 찾았으면 웹 호출 낭비를 피한다. 데이터 갭은 스크래퍼로 메운다.)
+    if not context_text:
+        _t = time.perf_counter()
         web_answer = await build_official_web_search_answer_direct(req.question, history, interpretation)
+        timings["web_search_ms"] = round((time.perf_counter() - _t) * 1000)
         if web_answer:
             context_text = web_answer.answer
             answer_mode = web_answer.answer_mode
@@ -343,7 +356,9 @@ async def chat(req: ChatRequest, _: str = Depends(verify_api_key)):
         dept_site_ctx = get_department_site_context(req.question, history)
         if dept_site_ctx:
             context_text = f"{context_text}\n\n{dept_site_ctx}" if context_text else dept_site_ctx
+        _t = time.perf_counter()
         final_answer = await get_gpt_response(req.question, context_text, history, interpretation)
+        timings["generate_ms"] = round((time.perf_counter() - _t) * 1000)
     
     # Validation for empty responses or low-quality RAG
     if not final_answer or "정보를 찾지 못했습니다" in final_answer:
@@ -359,9 +374,12 @@ async def chat(req: ChatRequest, _: str = Depends(verify_api_key)):
     if CHAT_MEMORY_ENABLED and req.memory_enabled:
         conversation_memory.update(req.session_id, req.question, interpretation, state, final_answer)
 
+    timings["total_ms"] = round((time.perf_counter() - _pipeline_start) * 1000)
+    print(f"Log: [Timing] mode={answer_mode} total={timings['total_ms']}ms detail={timings}")
+
     debug_payload = None
     if req.debug:
-        debug_payload = {"answer_mode": answer_mode, "interpretation": interpretation}
+        debug_payload = {"answer_mode": answer_mode, "interpretation": interpretation, "timings_ms": timings}
         memory_debug = conversation_memory.debug_snapshot(req.session_id) if CHAT_MEMORY_ENABLED else None
         if memory_debug:
             debug_payload["memory"] = memory_debug

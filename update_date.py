@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import time
 import uuid
@@ -255,6 +256,69 @@ def crawl_active_scholarships_with_selenium():
                 f.write("\n---\n".join(collected_data))
             print(f"  Success: 장학안내 수집 완료 ({len(collected_data)}건)")
 
+def crawl_sw_center_notices():
+    """SW중심대학사업단(sw.chosun.ac.kr) 공지 수집.
+
+    하계 단기 인턴십 등 SW사업단 모집공고는 기존 5개 게시판에 없어 별도로 수집한다.
+    이 게시판은 board_list 테이블 구조이며 본문은 div.board_view > div.content_wrap에 있다.
+    """
+    base_url = "https://sw.chosun.ac.kr/main/menu?gc=605XOAS"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    collected_data = []
+    seen_links = set()
+
+    print("▶ [+] SW중심대학사업단 공지 수집 중...")
+    try:
+        for page in range(1, 4):
+            response = requests.get(f"{base_url}&page={page}", headers=headers, verify=False, timeout=10)
+            response.encoding = 'utf-8'
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            for row in soup.select("table.board_list tbody tr"):
+                title_tag = row.select_one("td.article_title a")
+                if not title_tag or 'href' not in title_tag.attrs:
+                    continue
+                link = title_tag['href']
+                if not link.startswith("http"):
+                    link = "https://sw.chosun.ac.kr" + link if link.startswith("/") else f"{base_url}&{link.lstrip('?&')}"
+                if link in seen_links:
+                    continue
+                seen_links.add(link)
+
+                p_tag = title_tag.select_one("p")
+                title = (p_tag.get_text(strip=True) if p_tag else title_tag.get_text(strip=True))
+
+                date_text = ""
+                for td in row.select("td"):
+                    cell = td.get_text(strip=True)
+                    if re.match(r"^\d{4}-\d{2}-\d{2}$", cell):
+                        date_text = cell
+                        break
+
+                # 상단 고정 공지(class="notice")는 날짜 무관 포함, 일반 글은 2026년만 포함
+                is_notice = "notice" in (row.get("class") or [])
+                if not is_notice and not date_text.startswith("2026"):
+                    continue
+
+                try:
+                    detail_resp = requests.get(link, headers=headers, verify=False, timeout=10)
+                    detail_resp.encoding = 'utf-8'
+                    dsoup = BeautifulSoup(detail_resp.text, 'html.parser')
+                    content_tag = dsoup.select_one("div.board_view div.content_wrap") or dsoup.select_one("div.content_wrap")
+                    content_text = content_tag.get_text(separator='\n', strip=True) if content_tag else "본문 없음"
+                except Exception:
+                    content_text = "본문 수집 에러"
+
+                collected_data.append(f"분류: SW중심대학사업단공지\n제목: {title}\n날짜: {date_text}\n내용:\n{content_text}")
+                time.sleep(0.5)
+    except Exception as e:
+        print(f"Error: SW중심대학사업단 공지 에러: {e}")
+    finally:
+        if collected_data:
+            with open(os.path.join(DATA_SAVE_DIR, "SW중심대학사업단공지_2026.txt"), "w", encoding="utf-8") as f:
+                f.write("\n---\n".join(collected_data))
+            print(f"  Success: SW중심대학사업단 공지 수집 완료 ({len(collected_data)}건)")
+
 def crawl_cafeteria_menus():
     target_menus = {
         "글로벌 기숙사식당": "https://www3.chosun.ac.kr/chosun/608/subview.do",
@@ -363,6 +427,7 @@ def run_pipeline():
     crawl_general_notices()
     crawl_external_notices()
     crawl_active_scholarships_with_selenium()
+    crawl_sw_center_notices()
     crawl_cafeteria_menus()
     
     # 2. 갱신 전용 DB 초기화 및 생성

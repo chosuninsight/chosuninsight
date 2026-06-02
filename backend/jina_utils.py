@@ -67,17 +67,33 @@ class JinaSearchTool:
         "검색 쿼리를 입력하면 검색 결과의 정제된 텍스트 내용을 반환합니다."
     )
 
-    def __init__(self, api_key: Optional[str] = None, max_results: int = 3):
+    def __init__(self, api_key: Optional[str] = None, max_results: int = 3, timeout: Optional[float] = None):
         self.api_key = api_key
         self.max_results = max_results
         self.base_url = "https://s.jina.ai/"
+        # 5초 응답 목표를 위해 웹검색 외부 호출 상한을 낮춘다(기본 8초, 기존 30초).
+        if timeout is None:
+            try:
+                timeout = float(os.getenv("JINA_TIMEOUT_SECONDS", "8"))
+            except (TypeError, ValueError):
+                timeout = 8.0
+        self.timeout = timeout
 
     def run(self, query: str, official_only: bool = False) -> str:
+        """검색 결과의 정제된 텍스트만 반환한다(기존 호출 호환용)."""
+        return self.run_with_sources(query, official_only=official_only)[0]
+
+    def run_with_sources(self, query: str, official_only: bool = False) -> tuple[str, list[dict]]:
+        """검색 결과 텍스트와 함께 출처 목록을 반환한다.
+
+        출처는 URL 문자열이 아니라 {"title": 제목, "url": 링크} 형태로 반환해
+        프론트가 raw URL 대신 페이지 제목을 출처 라벨로 표시할 수 있게 한다.
+        """
         cache_query = f"{query} official_only={official_only}"
         cached_result = web_search_cache.get(cache_query)
         if cached_result:
             print(f"Log: [Cache Hit] Query: {query}")
-            return cached_result["formatted_text"]
+            return cached_result["formatted_text"], cached_result.get("sources", [])
 
         search_query = query
         if official_only and "site:chosun.ac.kr" not in search_query:
@@ -90,41 +106,46 @@ class JinaSearchTool:
         }
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        
+
         try:
             print(f"Log: [Jina API Call] Query: {query}")
-            response = requests.get(url, headers=headers, timeout=30)
+            response = requests.get(url, headers=headers, timeout=self.timeout)
             response.raise_for_status()
             data = response.json()
-            
+
             summary = "" if official_only else data.get("chatResponse", "")
             results = data.get("data", [])
             if official_only:
                 results = [res for res in results if is_official_source_url(res.get("url", ""))]
-            
+
             if not results and not summary:
-                return "검색 결과가 없습니다."
-            
+                return "검색 결과가 없습니다.", []
+
             formatted = []
             if summary:
                 # Clean asterisks from summary as requested
                 clean_summary = summary.replace("*", "")
                 formatted.append(f"--- Jina AI Summary ---\n{clean_summary}\n")
-            
+
+            sources: list[dict] = []
+            seen_urls: set[str] = set()
             for i, res in enumerate(results[:self.max_results]):
-                title = res.get("title", "No Title")
+                title = str(res.get("title", "") or "").strip()
                 # Clean asterisks from content
                 content = res.get("content", "No Content").replace("*", "")
-                link = res.get("url", "")
-                formatted.append(f"[{i+1}] {title}\nURL: {link}\nContent: {content}\n")
-            
+                link = str(res.get("url", "") or "").strip()
+                formatted.append(f"[{i+1}] {title or 'No Title'}\nURL: {link}\nContent: {content}\n")
+                if link and link not in seen_urls:
+                    seen_urls.add(link)
+                    sources.append({"title": title or link, "url": link})
+
             formatted_text = "\n".join(formatted)
             if official_only and not formatted_text.strip():
-                return "조선대학교 공식 출처 검색 결과가 없습니다."
+                return "조선대학교 공식 출처 검색 결과가 없습니다.", []
 
             ttl = 3600 if any(k in query for k in ["축제", "대동제", "라인업"]) else 21600
-            web_search_cache.set(cache_query, {"formatted_text": formatted_text, "raw_data": data}, ttl_seconds=ttl)
-            
-            return formatted_text
+            web_search_cache.set(cache_query, {"formatted_text": formatted_text, "sources": sources}, ttl_seconds=ttl)
+
+            return formatted_text, sources
         except Exception as e:
-            return f"Jina Search API 호출 중 오류 발생: {str(e)}"
+            return f"Jina Search API 호출 중 오류 발생: {str(e)}", []

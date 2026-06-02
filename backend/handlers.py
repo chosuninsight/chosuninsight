@@ -1,5 +1,9 @@
 import json
 import re
+import os
+import time
+import asyncio
+import hashlib
 from datetime import datetime, timedelta
 from typing import Any, Optional
 from collections import defaultdict
@@ -24,6 +28,8 @@ CALENDAR_TIME_TERMS = ["언제", "날짜", "기간", "일정", "몇일", "며칠
 HOW_TO_TERMS = ["어떻게", "방법", "절차", "하는 법", "하는법"]
 CONTACT_TERMS = ["전화", "전화번호", "연락처", "문의"]
 PERSON_LOOKUP_TERMS = ["누구", "연구실", "연구분야", "전공분야", "담당", "교수진"]
+# 교수진이 아닌 행정부서/창구 — 교수 핸들러가 가로채면 안 되고 RAG/웹 검색으로 보내야 함
+ADMIN_OFFICE_TERMS = ["교학팀", "교무처", "교무팀", "학사팀", "행정실", "행정팀", "사무실", "학과사무실", "학생지원", "학생지원처", "입학처", "총무과", "교육지원", "취업지원", "산학협력단"]
 PORTAL_ROUTE_ACTION_TERMS = ["신청", "어디", "경로", "방법", "해야", "하려", "하고", "예약", "접수", "들어가", "바로가기", "접속", "사이트", "시스템"]
 
 PORTAL_ROUTE_RULES = [
@@ -412,9 +418,15 @@ def find_faculty_profile_for_state(state: ConversationState, question: str) -> d
     return matched[0] if len(matched) == 1 else None
 
 def build_structured_faculty_answer(question: str, history: list[ChatHistoryMessage], state: ConversationState, interpretation: dict[str, Any] | None = None) -> StructuredAnswer | None:
-    profile = find_faculty_profile_for_state(state, conversation_text(question, history))
+    # 라우팅은 raw history가 아니라 맥락이 반영된 standalone_question을 기준으로 한다.
+    lookup_text = state.standalone_question or conversation_text(question, history)
+    profile = find_faculty_profile_for_state(state, lookup_text)
     if not profile or not profile.get("faculty"):
         norm_q = normalize_entities(question).lower()
+        # 교학팀/행정실 등 행정부서 연락처는 교수진 데이터로 답할 수 없다.
+        # 잘못된 '교수 이름 없음' 답변 대신 None을 반환해 RAG/웹 검색 폴백으로 넘긴다.
+        if any(term in norm_q for term in ADMIN_OFFICE_TERMS):
+            return None
         if state.domain_intent == "faculty" or any(term in norm_q for term in ["교수", "교수님", "교수진"]):
             return StructuredAnswer(
                 answer="어느 학과 교수님 연락처를 찾으시나요? 학과명이나 교수님 성함을 알려주시면 확인된 교수진/연구실 전화번호를 안내해 드릴게요.",
@@ -636,8 +648,30 @@ def build_graduation_credit_progress_answer(question: str, history: list[ChatHis
     return None
 
 # --- Main Entry Handlers ---
+# 의도분석(interpret_chat_request)은 매 /chat 요청마다 무조건 실행되는 유일한 LLM 단계다.
+# 동일 질문+동일 맥락의 반복 요청에서 이 호출을 건너뛰도록 짧은 TTL 인메모리 캐시를 둔다.
+# 콘텐츠 답변이 아니라 '의도 분류'만 캐싱하므로 식단·공지 같은 시의성 데이터가 stale해지지 않는다.
+_INTERPRET_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_INTERPRET_CACHE_TTL_SECONDS = 600
+_INTERPRET_CACHE_MAX_ENTRIES = 500
+
+
+def _interpret_cache_key(question: str, history_text: str) -> str:
+    raw = f"{question}\x00{history_text}"
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+
 async def interpret_chat_request(question: str, history: list[ChatHistoryMessage]) -> dict[str, Any]:
     history_text = format_chat_history(history, max_messages=8, max_chars=1800)
+
+    # 캐시 조회: 질문+맥락이 동일하면 LLM 호출 없이 직전 분류 결과를 재사용한다.
+    cache_key = _interpret_cache_key(question, history_text)
+    now_ts = time.time()
+    cached = _INTERPRET_CACHE.get(cache_key)
+    if cached and cached[0] > now_ts:
+        # 호출부(build_conversation_state)가 결과 dict를 변형하므로 항상 복사본을 반환한다.
+        return json.loads(json.dumps(cached[1]))
+
     now = datetime.now(ZoneInfo("Asia/Seoul"))
     current_date_str = now.strftime("%Y-%m-%d %A")
 
@@ -681,11 +715,21 @@ async def interpret_chat_request(question: str, history: list[ChatHistoryMessage
             response_format={"type": "json_object"},
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
         )
-        return json.loads(response.choices[0].message.content or "{}")
+        result = json.loads(response.choices[0].message.content or "{}")
+        if isinstance(result, dict) and result:
+            if len(_INTERPRET_CACHE) >= _INTERPRET_CACHE_MAX_ENTRIES:
+                oldest_key = min(_INTERPRET_CACHE, key=lambda k: _INTERPRET_CACHE[k][0])
+                _INTERPRET_CACHE.pop(oldest_key, None)
+            _INTERPRET_CACHE[cache_key] = (now_ts + _INTERPRET_CACHE_TTL_SECONDS, result)
+            return json.loads(json.dumps(result))
+        return result if isinstance(result, dict) else {}
     except: return {}
 
 def build_query_frame(question: str, history: list[ChatHistoryMessage], interpretation: dict[str, Any] | None = None) -> QueryFrame:
-    combined_text = conversation_text(question, history)
+    # 라우팅 기준은 raw history 연결이 아니라 LLM이 맥락을 반영해 만든 standalone_question을 우선 사용한다.
+    # 이렇게 하면 의도된 follow-up은 유지되면서 직전 토픽이 다음 질문에 달라붙는 누수를 막는다.
+    resolved_text = str((interpretation or {}).get("standalone_question") or "").strip()
+    combined_text = resolved_text or conversation_text(question, history)
     entity = find_entity(combined_text)
     intent = infer_query_intent(question, entity)
     confidence = 0.85 if entity else 0.45
@@ -700,8 +744,10 @@ def build_query_frame(question: str, history: list[ChatHistoryMessage], interpre
     )
 
 def build_conversation_state(question: str, history: list[ChatHistoryMessage], interpretation: dict[str, Any] | None = None) -> ConversationState:
-    combined_text = conversation_text(question, history)
     interpretation = interpretation or {}
+    # 직전 토픽 누수 방지: 라우팅 휴리스틱은 raw history 연결 대신 LLM standalone_question을 기준으로 한다.
+    resolved_question = str(interpretation.get("standalone_question") or "").strip()
+    combined_text = resolved_question or conversation_text(question, history)
     
     # Use slots from LLM if available, otherwise fallback to heuristics
     slots = interpretation.get("slots") or {}
@@ -907,7 +953,8 @@ def build_general_education_answer(question: str, history: list[ChatHistoryMessa
     return StructuredAnswer(answer="\n".join(lines), sources=[ref.get("source") or "https://www.chosun.ac.kr"], answer_mode=ref_key)
 
 def build_graduation_policy_answer(question: str, history: list[ChatHistoryMessage], state: ConversationState) -> StructuredAnswer | None:
-    policy = find_graduation_policy_for_text(conversation_text(question, history))
+    # 직전 학점/학과 토픽 누수 방지: 맥락 반영된 standalone_question 기준으로 정책을 찾는다.
+    policy = find_graduation_policy_for_text(state.standalone_question or conversation_text(question, history))
     if not policy: return None
     
     dept = policy.get("department", "해당 학과")
@@ -984,7 +1031,10 @@ DOMAIN_HANDLERS = {
 
 def build_structured_domain_answer(question: str, history: list[ChatHistoryMessage], state: ConversationState, interpretation: dict[str, Any] | None = None) -> StructuredAnswer | None:
     # 1. Basic/Immediate data handlers
-    site_link_answer = build_department_site_link_answer(question, history)
+    # 직전 대화에서 언급된 학과명이 이후 무관한 질문(예: 학점)을 사이트 링크로 가로채는 누수를 막는다.
+    # raw history 대신 맥락이 반영된 standalone_question만으로 사이트 링크를 판단한다.
+    resolved_question = str((interpretation or {}).get("standalone_question") or "").strip() or question
+    site_link_answer = build_department_site_link_answer(resolved_question, [])
     if site_link_answer:
         return site_link_answer
 
@@ -1039,9 +1089,21 @@ async def build_official_web_search_answer_direct(
         standalone = (interpretation or {}).get("standalone_question") or question
         search_query = standalone if standalone.startswith("조선대학교") else f"조선대학교 {standalone}"
 
-    # 3. Jina AI 검색
+    # 3. Jina AI 검색 — 스트리밍 응답이 scalar timeout을 무력화하므로 비동기 하드 총-타임아웃을 건다.
     jina = JinaSearchTool(api_key=JINA_API_KEY, max_results=WEB_SEARCH_MAX_RESULTS)
-    search_results_text = jina.run(search_query, official_only=True)
+    try:
+        total_timeout = float(os.getenv("WEB_SEARCH_TOTAL_TIMEOUT_SECONDS", "8"))
+    except (TypeError, ValueError):
+        total_timeout = 8.0
+    try:
+        loop = asyncio.get_event_loop()
+        search_results_text, jina_sources = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: jina.run_with_sources(search_query, True)),
+            timeout=total_timeout,
+        )
+    except (asyncio.TimeoutError, Exception) as exc:
+        print(f"Warning: 웹 검색 시간 초과/실패({total_timeout}s 상한): {exc}")
+        return None
 
     if "검색 결과가 없습니다" in search_results_text or "오류 발생" in search_results_text: return None
 
@@ -1065,7 +1127,9 @@ async def build_official_web_search_answer_direct(
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
         )
         answer = response.choices[0].message.content.replace("*", "").strip()
-        sources = filter_official_source_urls(extract_urls_from_value(search_results_text))[:5]
+        # 출처는 {"title", "url"} 형태로 전달해 프론트가 raw URL 대신 페이지 제목을 라벨로 쓰게 한다.
+        # clean_web_sources로 홈페이지/이미지/네비 앵커 등 비-콘텐츠 URL을 제거한다.
+        sources = clean_web_sources([s for s in jina_sources if is_official_source_url(s.get("url", ""))])[:5]
         if not sources:
             return None
 

@@ -7,12 +7,19 @@ const authHeaders = {
   'X-Api-Key': INTERNAL_API_KEY,
 };
 
+const urlToLabel = (url) => url.replace(/^https?:\/\//i, '').replace(/\/$/, '');
+
 const toLink = (source) => {
+  // 웹 검색 출처는 { title, url } 객체로 내려온다 → 제목을 라벨로 사용
+  if (source && typeof source === 'object') {
+    const url = typeof source.url === 'string' ? source.url : '';
+    if (!/^https?:\/\//i.test(url)) return null;
+    const title = typeof source.title === 'string' ? source.title.trim() : '';
+    return { label: title || urlToLabel(url), url };
+  }
+  // 정형 출처(학과 링크 등)는 URL 문자열로 내려온다 → 기존 동작 유지
   if (typeof source !== 'string' || !/^https?:\/\//i.test(source)) return null;
-  return {
-    label: source.replace(/^https?:\/\//i, '').replace(/\/$/, ''),
-    url: source,
-  };
+  return { label: urlToLabel(source), url: source };
 };
 
 /**

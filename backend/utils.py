@@ -134,15 +134,72 @@ def is_official_source_url(url: str) -> bool:
         return False
     return any(host == suffix or host.endswith(f".{suffix}") for suffix in OFFICIAL_SOURCE_HOST_SUFFIXES)
 
-def filter_official_source_urls(urls: list[str]) -> list[str]:
+def source_url_value(source: Any) -> str:
+    """출처가 URL 문자열이든 {"title","url"} 객체이든 URL만 추출한다."""
+    if isinstance(source, dict):
+        return str(source.get("url", "")).strip()
+    return str(source).strip()
+
+# 출처로 부적절한 비-콘텐츠 URL(이미지/자산 파일 확장자)
+NON_CONTENT_URL_EXTENSIONS = (
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".bmp",
+    ".css", ".js", ".woff", ".woff2", ".ttf", ".map",
+)
+
+def is_content_source_url(url: str) -> bool:
+    """실제 '콘텐츠 페이지' URL인지 판별한다.
+
+    제외 대상:
+    - 상대경로/앵커(../subview.do, #lnb 등) — 절대 http(s)가 아님
+    - 이미지·CSS·JS 등 자산 파일
+    - 사이트 홈페이지/루트(index.do, /) — 특정 안내가 아닌 기본 진입점
+    """
+    u = str(url).strip()
+    if not u.lower().startswith(("http://", "https://")):
+        return False
+    try:
+        parsed = urlparse(u)
+    except Exception:
+        return False
+    path = (parsed.path or "").lower()
+    if path.endswith(NON_CONTENT_URL_EXTENSIONS):
+        return False
+    stripped = path.strip("/")
+    # 루트 또는 홈페이지(index.do)는 콘텐츠 출처로 보지 않는다.
+    if stripped == "" or stripped.split("/")[-1] in ("index.do", "index.html", "main.do"):
+        return False
+    return True
+
+def clean_web_sources(sources: list) -> list:
+    """웹검색 출처에서 비-콘텐츠 URL을 제거하고, #앵커 변형을 한 페이지로 합친다.
+
+    입력이 {"title","url"} 객체면 객체를, 문자열이면 문자열을 보존한다(프래그먼트 제거).
+    """
+    seen = set()
+    cleaned = []
+    for source in sources:
+        url = source_url_value(source)
+        base = url.split("#")[0]  # #_contentBuilder, #lnb 등 동일 페이지 앵커 변형 병합
+        if not is_content_source_url(base) or base in seen:
+            continue
+        seen.add(base)
+        if isinstance(source, dict):
+            title = str(source.get("title", "")).strip()
+            cleaned.append({"title": title or base, "url": base})
+        else:
+            cleaned.append(base)
+    return cleaned
+
+def filter_official_source_urls(sources: list) -> list:
+    """공식 출처만 남긴다. 입력이 문자열이면 문자열을, 객체면 객체를 그대로 보존한다."""
     seen = set()
     filtered = []
-    for url in urls:
-        clean_url = str(url).strip()
-        if not clean_url or clean_url in seen or not is_official_source_url(clean_url):
+    for source in sources:
+        url = source_url_value(source)
+        if not url or url in seen or not is_official_source_url(url):
             continue
-        seen.add(clean_url)
-        filtered.append(clean_url)
+        seen.add(url)
+        filtered.append(source)
     return filtered
 
 def save_web_discovery(question: str, answer: str, sources: list[str], mode: str):
@@ -197,7 +254,8 @@ def find_in_web_knowledge(question: str) -> StructuredAnswer | None:
                 if now < expire_at:
                     sources = item.get("sources", [])
                     if item.get("mode") == "official_web_search":
-                        sources = filter_official_source_urls(sources)
+                        # 과거 캐시에 저장된 정크 URL(홈페이지/이미지/앵커)도 함께 정리한다.
+                        sources = clean_web_sources(filter_official_source_urls(sources))
                         if not sources:
                             continue
                     return StructuredAnswer(
