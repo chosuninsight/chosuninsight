@@ -30,6 +30,26 @@ CONTACT_TERMS = ["전화", "전화번호", "연락처", "문의"]
 PERSON_LOOKUP_TERMS = ["누구", "연구실", "연구분야", "전공분야", "담당", "교수진"]
 # 교수진이 아닌 행정부서/창구 — 교수 핸들러가 가로채면 안 되고 RAG/웹 검색으로 보내야 함
 ADMIN_OFFICE_TERMS = ["교학팀", "교무처", "교무팀", "학사팀", "행정실", "행정팀", "사무실", "학과사무실", "학생지원", "학생지원처", "입학처", "총무과", "교육지원", "취업지원", "산학협력단"]
+
+# 단과대학별 교학팀 대표 전화번호 (출처: chosun_rag_data/학사공지_2026.txt '단과대학 교학팀' 안내)
+# 조선대 교학팀은 학과 단위가 아니라 단과대학 단위로 운영되므로, 학과 질문은 소속 단과대로 매핑해 안내한다.
+COLLEGE_OFFICE_PHONES = [
+    ("글로벌인문대학", "062-230-6903"),
+    ("의과대학", "062-230-6396, 6334"),
+    ("자연과학·공공보건안전대학", "062-230-6602, 6985"),
+    ("약학대학", "062-230-6363"),
+    ("법사회대학", "062-230-6703, 6761"),
+    ("치과대학", "062-230-6866, 6868"),
+    ("공과대학", "1공학관 062-230-7007 / 2공학관 062-230-7073"),
+    ("미술대학", "062-230-7802"),
+    ("경상대학", "062-230-6802, 6803"),
+    ("체육대학", "062-230-7401"),
+    ("IT융합대학", "062-230-6037, 6038"),
+    ("자유전공학부", "062-230-6178, 6192"),
+    ("미래사회융합대학", "062-230-7969"),
+    ("사범대학", "062-230-7303, 7302"),
+]
+COLLEGE_OFFICE_PHONE_MAP = {c: p for c, p in COLLEGE_OFFICE_PHONES}
 PORTAL_ROUTE_ACTION_TERMS = ["신청", "어디", "경로", "방법", "해야", "하려", "하고", "예약", "접수", "들어가", "바로가기", "접속", "사이트", "시스템"]
 
 PORTAL_ROUTE_RULES = [
@@ -420,10 +440,16 @@ def find_faculty_profile_for_state(state: ConversationState, question: str) -> d
 def build_structured_faculty_answer(question: str, history: list[ChatHistoryMessage], state: ConversationState, interpretation: dict[str, Any] | None = None) -> StructuredAnswer | None:
     # 라우팅은 raw history가 아니라 맥락이 반영된 standalone_question을 기준으로 한다.
     lookup_text = state.standalone_question or conversation_text(question, history)
+    # 교학팀/행정실 등 행정부서 연락처는 교수진 데이터로 답할 수 없다.
+    # 직전 대화에서 학과(state.department)가 잡혀 있으면 프로파일이 먼저 매칭돼
+    # 행정부서 질문에도 엉뚱한 교수 답변이 나가므로, 프로파일 매칭보다 먼저 가드한다.
+    # 맥락이 반영된 lookup_text를 기준으로 검사해 "전화번호 알려줘" 같은 후속 질문도 잡는다.
+    norm_lookup = normalize_entities(lookup_text).lower()
+    if any(term in norm_lookup for term in ADMIN_OFFICE_TERMS):
+        return None
     profile = find_faculty_profile_for_state(state, lookup_text)
     if not profile or not profile.get("faculty"):
         norm_q = normalize_entities(question).lower()
-        # 교학팀/행정실 등 행정부서 연락처는 교수진 데이터로 답할 수 없다.
         # 잘못된 '교수 이름 없음' 답변 대신 None을 반환해 RAG/웹 검색 폴백으로 넘긴다.
         if any(term in norm_q for term in ADMIN_OFFICE_TERMS):
             return None
@@ -459,6 +485,42 @@ def build_structured_faculty_answer(question: str, history: list[ChatHistoryMess
         if m.get("phone") and (phone_q or matched or not compact): dtl.append(f"전화: {m['phone']}")
         lines.append(f"- {m.get('name')} ({', '.join(d for d in dtl if d)})")
     return StructuredAnswer(answer="\n".join(lines), sources=[profile.get("source") or "https://www.chosun.ac.kr"], answer_mode="faculty_profile")
+
+# --- Admin Office Contact Logic ---
+def find_college_for_office_query(text: str) -> tuple[str | None, bool]:
+    # 반환: (단과대명 or None, 학과로부터 매핑됐는지 여부)
+    norm = normalize_faculty_lookup_text(text)
+    # 1) 학과 별칭 → 소속 단과대 매핑 (가장 구체적). 예: 컴퓨터공학과 → IT융합대학
+    for p in FACULTY_PROFILES:
+        college = str(p.get("college") or "").strip()
+        if not college or college not in COLLEGE_OFFICE_PHONE_MAP:
+            continue
+        if any(normalize_faculty_lookup_text(a) and normalize_faculty_lookup_text(a) in norm for a in profile_aliases(p)):
+            return college, True
+    # 2) 단과대학 이름 직접 언급. 예: IT융합대학 교학팀
+    for college in COLLEGE_OFFICE_PHONE_MAP:
+        if normalize_faculty_lookup_text(college) in norm:
+            return college, False
+    return None, False
+
+def build_admin_office_contact_answer(question: str, history: list[ChatHistoryMessage], state: ConversationState, interpretation: dict[str, Any] | None = None) -> StructuredAnswer | None:
+    # 교학팀 전화번호는 LLM 추측/대화 맥락 오염을 피해 권威 데이터로 결정적으로 답한다.
+    interpretation = interpretation or {}
+    lookup_text = str(interpretation.get("standalone_question") or "").strip() or conversation_text(question, history)
+    norm = normalize_entities(lookup_text).lower()
+    if "교학팀" not in norm or not any(t in norm for t in CONTACT_TERMS):
+        return None
+    src = ["학사공지_2026.txt"]
+    college, by_dept = find_college_for_office_query(lookup_text)
+    if college:
+        phone = COLLEGE_OFFICE_PHONE_MAP[college]
+        note = "\n(교학팀은 학과 단위가 아니라 소속 단과대학 단위로 운영됩니다.)" if by_dept else ""
+        return StructuredAnswer(answer=f"{college} 교학팀 전화번호는 **{phone}**입니다.{note}", sources=src, answer_mode="academic_administration")
+    # 단과대 특정이 안 되면 전체 목록을 안내한다.
+    lines = ["조선대학교 단과대학별 교학팀 전화번호입니다:", ""]
+    lines += [f"• {c}: {p}" for c, p in COLLEGE_OFFICE_PHONES]
+    lines += ["", "찾으시는 학과의 소속 단과대학 교학팀으로 문의하시면 됩니다."]
+    return StructuredAnswer(answer="\n".join(lines), sources=src, answer_mode="academic_administration")
 
 # --- Portal Logic ---
 def select_portal_route(question: str, history: list[ChatHistoryMessage]) -> dict[str, Any] | None:
@@ -1038,6 +1100,11 @@ def build_structured_domain_answer(question: str, history: list[ChatHistoryMessa
     if site_link_answer:
         return site_link_answer
 
+    # 교학팀 전화번호는 권威 데이터로 결정적으로 답해 RAG/LLM의 번호 오염을 차단한다.
+    admin_contact_answer = build_admin_office_contact_answer(question, history, state, interpretation)
+    if admin_contact_answer:
+        return admin_contact_answer
+
     if state.domain_intent == "current_date":
         combined_text = conversation_text(question, history).lower()
         if "오늘" in combined_text and ("날짜" in combined_text or "며칠" in combined_text):
@@ -1173,6 +1240,7 @@ async def get_gpt_response(question: str, context: str, history: list[ChatHistor
 4. 타 대학 제외: 조선대학교와 관련 없는 정보는 포함하지 마.
 5. 금지사항: 답변 본문에 직접적인 URL이나 "[공식 홈페이지]" 같은 텍스트는 포함하지 마. (시스템이 별도로 처리함)
 6. 정확성: 오늘 날짜는 {now.strftime("%Y년 %m월 %d일")}이야. 날짜와 요일을 정확히 계산해서 안내해.
+7. 연락처 그라운딩: 전화번호·연락처는 반드시 [참고 정보]에 명시된 것만 사용해. [참고 정보]에 해당 부서/대상의 번호가 없으면 "확인된 번호가 없다"고 안내하고, 절대 [이전 대화]에 나온 다른 번호를 가져다 붙이거나 추측하지 마. 특히 '교학팀' 같은 행정부서 번호를 교수 연구실 번호로 답하지 마.
 """.strip()
     history_text = format_chat_history(history, max_messages=5)
     user_prompt = f"[참고 정보]\n{context}\n\n[이전 대화]\n{history_text}\n\n[현재 질문]\n\"\"\"{question}\"\"\""
