@@ -1,6 +1,8 @@
 # ✅ FastAPI + ChromaDB + GPT 연결 (최종)
 
 import os
+import json
+import re
 
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel
@@ -16,20 +18,21 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # =====================================
-# 🔥 환경변수 추가 (요청사항 반영)
+# 환경변수
 # =====================================
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 CHAT_MODEL_NAME = os.getenv("CHAT_MODEL_NAME", "gpt-4o-mini")
-PERSIST_DIRECTORY = os.getenv("PERSIST_DIRECTORY", "/app/chroma_db")
-UPDATE_DB_DIRECTORY = os.getenv("UPDATE_DB_DIRECTORY", "/app/chroma_db_update") # 갱신 DB 경로 [cite: 8]
-COLLECTION_NAME = os.getenv("COLLECTION_NAME", "chosun_insight")
-UPDATE_COLLECTION_NAME = "chosun_daily_update" # Update date.py의 설정과 일치
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "jhgan/ko-sroberta-multitask")
+PERSIST_DIRECTORY = os.getenv("PERSIST_DIRECTORY", "C:/chroma_db_store")
+COLLECTION_NAME = os.getenv("COLLECTION_NAME", "chosun_extracurricular")
+EMBEDDING_MODEL = os.getenv(
+    "EMBEDDING_MODEL",
+    "jhgan/ko-sroberta-multitask"
+)
 
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # =====================================
-# 1. FastAPI 기본 설정
+# FastAPI 설정
 # =====================================
 app = FastAPI(title="Chosun RAG API")
 
@@ -42,61 +45,217 @@ app.add_middleware(
 )
 
 # =====================================
-# 2. 요청 / 응답 모델
+# 요청 / 응답 모델
 # =====================================
 class ChatRequest(BaseModel):
     question: str
+
 
 class ChatResponse(BaseModel):
     success: bool
     answer: str
     sources: list
 
+
 # =====================================
-# 3. ChromaDB 연결 (env 적용)
+# ChromaDB 연결
 # =====================================
 embeddings = HuggingFaceEmbeddings(
     model_name=EMBEDDING_MODEL
 )
 
-vectorstore_origin = Chroma(
+vectorstore = Chroma(
     collection_name=COLLECTION_NAME,
     embedding_function=embeddings,
     persist_directory=PERSIST_DIRECTORY
 )
 
-vectorstore_update = Chroma(
-    collection_name=UPDATE_COLLECTION_NAME,
-    embedding_function=embeddings,
-    persist_directory=UPDATE_DB_DIRECTORY
+print(
+    "📦 DB 데이터 개수:",
+    vectorstore._collection.count()
 )
 
-# [수정 코드]
-print("📦 기존 DB 데이터 개수:", vectorstore_origin._collection.count())
-print("📦 갱신 DB 데이터 개수:", vectorstore_update._collection.count())
+# =====================================
+# 학과 전화번호 로드
+# =====================================
+try:
+
+    with open(
+        "학과전화번호.json",
+        "r",
+        encoding="utf-8"
+    ) as f:
+
+        phone_data = json.load(f)
+
+    DEPARTMENT_PHONES = {}
+
+    for item in phone_data["학부_및_학과"]:
+
+        dept = item.get("학과", "").strip()
+        phone = item.get("전화번호", "").strip()
+
+        if dept and phone:
+            DEPARTMENT_PHONES[dept] = phone
+
+    print(
+        f"📞 학과 전화번호 "
+        f"{len(DEPARTMENT_PHONES)}개 로드 완료"
+    )
+
+except Exception as e:
+
+    print("⚠️ 학과 전화번호 로드 실패:", e)
+
+    DEPARTMENT_PHONES = {}
 
 # =====================================
-# 🔥 4. 검색 함수 (유사도 필터링 추가)
+# 학과 별칭 자동 생성
+# =====================================
+def generate_department_aliases():
+
+    aliases = {}
+
+    for dept in DEPARTMENT_PHONES.keys():
+
+        # 정식 명칭
+        aliases[dept] = dept
+
+        # 괄호 안 전공 추출
+        match = re.search(
+            r"\((.*?)\)",
+            dept
+        )
+
+        if match:
+
+            major = match.group(1).strip()
+
+            aliases[major] = dept
+
+            if major.endswith("전공"):
+                aliases[
+                    major.replace("전공", "")
+                ] = dept
+
+            if major.endswith("학과"):
+                aliases[
+                    major.replace("학과", "")
+                ] = dept
+
+        # 전자공학과 → 전자공학
+        if dept.endswith("학과"):
+            aliases[
+                dept.replace("학과", "")
+            ] = dept
+
+        # 경영학부 → 경영
+        if dept.endswith("학부"):
+            aliases[
+                dept.replace("학부", "")
+            ] = dept
+
+    # 학생들이 자주 쓰는 표현
+    custom_aliases = {
+        "컴공": "AI·SW학부(컴퓨터공학전공)",
+        "정통": "AI·SW학부(정보통신공학전공)",
+        "정보보안": "AI·SW학부(정보보안전공)",
+        "인공지능": "AI·SW학부(인공지능공학전공)",
+        "모빌리티": "AI·SW학부(모빌리티SW전공)",
+        "전자과": "전자공학과",
+        "기계과": "기계공학과",
+        "건축과": "건축공학과"
+    }
+
+    for alias, dept in custom_aliases.items():
+
+        if dept in DEPARTMENT_PHONES:
+            aliases[alias] = dept
+
+    return aliases
+
+
+DEPARTMENT_ALIAS = generate_department_aliases()
+
+print(
+    f"📞 학과 별칭 "
+    f"{len(DEPARTMENT_ALIAS)}개 생성 완료"
+)
+
+# =====================================
+# 학과 전화번호 찾기
+# =====================================
+def find_department_phone(
+    question: str,
+    docs: list
+):
+
+    question = question.strip()
+
+    # 질문 우선 검색
+    for alias, dept in DEPARTMENT_ALIAS.items():
+
+        if alias in question:
+
+            phone = DEPARTMENT_PHONES.get(dept)
+
+            if phone:
+                return dept, phone
+
+    # 검색 문서 검색
+    for doc in docs:
+
+        for alias, dept in DEPARTMENT_ALIAS.items():
+
+            if alias in doc:
+
+                phone = DEPARTMENT_PHONES.get(dept)
+
+                if phone:
+                    return dept, phone
+
+    return None, None
+
+
+# =====================================
+# 검색 함수
 # =====================================
 def search_docs(query: str):
+
     if not query.strip():
+
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="질문이 비어 있습니다."
         )
 
-    res_origin = vectorstore_origin.similarity_search_with_score(query, k=3)
-    res_update = vectorstore_update.similarity_search_with_score(query, k=3)
-    
-    all_results = res_origin + res_update
+    results = vectorstore.similarity_search_with_score(
+        query,
+        k=3
+    )
 
-    docs, sources = [], []
+    threshold = 0.5
 
-    for doc, score in all_results:
-        docs.append(doc.page_content)
-        sources.append(doc.metadata.get("source", ""))
+    docs = []
+    sources = []
+
+    for doc, score in results:
+
+        if score < threshold:
+
+            docs.append(
+                doc.page_content
+            )
+
+            sources.append(
+                doc.metadata.get(
+                    "source",
+                    ""
+                )
+            )
 
     if not docs:
+
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="검색 결과가 없습니다."
@@ -104,12 +263,18 @@ def search_docs(query: str):
 
     return docs, sources
 
+
 # =====================================
-# 🔥 5. GPT 응답 함수 추가
+# GPT 응답 함수
 # =====================================
-async def get_gpt_response(question, context):
+async def get_gpt_response(
+    question,
+    context
+):
+
     prompt = f"""
 너는 조선대학교 정보 도우미야.
+
 아래 정보를 기반으로 질문에 답변해.
 
 [참고 정보]
@@ -119,49 +284,98 @@ async def get_gpt_response(question, context):
 {question}
 
 [규칙]
-- 정보 없으면 "해당 정보를 찾을 수 없습니다"라고 답해
+- 참고 정보에 있는 내용만 사용
+- 정보가 없으면
+  "해당 정보를 찾을 수 없습니다"
+  라고 답변
 - 한국어로 답변
 """
 
     response = await client.chat.completions.create(
-        model=CHAT_MODEL_NAME,  # 🔥 환경변수 적용
+        model=CHAT_MODEL_NAME,
         messages=[
-            {"role": "system", "content": "조선대학교 정보 챗봇"},
-            {"role": "user", "content": prompt}
+            {
+                "role": "system",
+                "content": "조선대학교 정보 챗봇"
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
         ]
     )
 
-    return response.choices[0].message.content
+    return (
+        response
+        .choices[0]
+        .message
+        .content
+    )
+
 
 # =====================================
-# 6. API
+# 기본 API
 # =====================================
-
-@app.get("/", status_code=status.HTTP_200_OK)
+@app.get(
+    "/",
+    status_code=status.HTTP_200_OK
+)
 def root():
+
     return {
         "success": True,
         "message": "RAG 서버 실행 중"
     }
 
-# 🔥 챗봇 API (GPT 연결됨)
+
+# =====================================
+# 챗봇 API
+# =====================================
 @app.post(
     "/chat",
     response_model=ChatResponse,
     status_code=status.HTTP_200_OK
 )
-async def chat(req: ChatRequest):
+async def chat(
+    req: ChatRequest
+):
 
-    docs, sources = search_docs(req.question)
+    docs, sources = search_docs(
+        req.question
+    )
 
     context = "\n".join(docs)
 
     try:
-        answer = await get_gpt_response(req.question, context)
-    except Exception as e:
+
+        answer = await get_gpt_response(
+            req.question,
+            context
+        )
+
+    except Exception:
+
         raise HTTPException(
             status_code=500,
             detail="GPT 응답 생성 실패"
+        )
+
+    # =============================
+    # 학과 전화번호 자동 첨부
+    # =============================
+    dept, phone = find_department_phone(
+        req.question,
+        docs
+    )
+
+    if dept and phone:
+
+        answer += (
+            "\n\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "📞 관련 학과 문의처\n"
+            f"학과 : {dept}\n"
+            f"전화번호 : {phone}"
         )
 
     return {
@@ -170,13 +384,18 @@ async def chat(req: ChatRequest):
         "sources": sources
     }
 
+
 # =====================================
-# 7. 글로벌 에러 처리
+# 글로벌 예외 처리
 # =====================================
 @app.exception_handler(Exception)
-def global_exception_handler(request, exc):
+def global_exception_handler(
+    request,
+    exc
+):
+
     return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        status_code=500,
         content={
             "success": False,
             "message": "서버 내부 오류 발생",
@@ -184,6 +403,8 @@ def global_exception_handler(request, exc):
         }
     )
 
+
 # =====================================
 # 실행
 # uvicorn main:app --reload
+# =====================================
