@@ -1,410 +1,438 @@
-# ✅ FastAPI + ChromaDB + GPT 연결 (최종)
-
-import os
-import json
-import re
-
-from fastapi import FastAPI, HTTPException, status
-from pydantic import BaseModel
+import time
+from fastapi import FastAPI, HTTPException, status, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from typing import Any
+from uuid import UUID
 
-from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
-
-from openai import AsyncOpenAI
-from dotenv import load_dotenv
-
-load_dotenv()
-
-# =====================================
-# 환경변수
-# =====================================
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-CHAT_MODEL_NAME = os.getenv("CHAT_MODEL_NAME", "gpt-4o-mini")
-PERSIST_DIRECTORY = os.getenv("PERSIST_DIRECTORY", "C:/chroma_db_store")
-COLLECTION_NAME = os.getenv("COLLECTION_NAME", "chosun_extracurricular")
-EMBEDDING_MODEL = os.getenv(
-    "EMBEDDING_MODEL",
-    "jhgan/ko-sroberta-multitask"
-)
-
-client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+from backend.config import *
+from backend.models import *
+from backend.utils import *
+from backend.search_logic import *
+from backend.handlers import *
+from backend.memory import create_conversation_memory_store
 
 # =====================================
-# FastAPI 설정
+# 1. 보안 및 의존성 설정
+# =====================================
+async def verify_api_key(x_api_key: str = Header(None)):
+    if not x_api_key or x_api_key != INTERNAL_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="유효하지 않은 API 키입니다."
+        )
+    return x_api_key
+
+# =====================================
+# 2. FastAPI 기본 설정
 # =====================================
 app = FastAPI(title="Chosun RAG API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# =====================================
-# 요청 / 응답 모델
-# =====================================
-class ChatRequest(BaseModel):
-    question: str
-
-
-class ChatResponse(BaseModel):
-    success: bool
-    answer: str
-    sources: list
-
-
-# =====================================
-# ChromaDB 연결
-# =====================================
-embeddings = HuggingFaceEmbeddings(
-    model_name=EMBEDDING_MODEL
+conversation_memory = create_conversation_memory_store(
+    provider=MEMORY_PROVIDER,
+    ttl_seconds=CHAT_MEMORY_TTL_SECONDS,
+    max_sessions=CHAT_MEMORY_MAX_SESSIONS,
+    store_path=MEMORY_STORE_PATH,
+    agent_id=MEMORY_AGENT_ID,
+    encryption_key=MEMORY_ENCRYPTION_KEY,
 )
 
-vectorstore = Chroma(
-    collection_name=COLLECTION_NAME,
-    embedding_function=embeddings,
-    persist_directory=PERSIST_DIRECTORY
-)
 
-print(
-    "📦 DB 데이터 개수:",
-    vectorstore._collection.count()
-)
-
-# =====================================
-# 학과 전화번호 로드
-# =====================================
-try:
-
-    with open(
-        "학과전화번호.json",
-        "r",
-        encoding="utf-8"
-    ) as f:
-
-        phone_data = json.load(f)
-
-    DEPARTMENT_PHONES = {}
-
-    for item in phone_data["학부_및_학과"]:
-
-        dept = item.get("학과", "").strip()
-        phone = item.get("전화번호", "").strip()
-
-        if dept and phone:
-            DEPARTMENT_PHONES[dept] = phone
-
-    print(
-        f"📞 학과 전화번호 "
-        f"{len(DEPARTMENT_PHONES)}개 로드 완료"
-    )
-
-except Exception as e:
-
-    print("⚠️ 학과 전화번호 로드 실패:", e)
-
-    DEPARTMENT_PHONES = {}
-
-# =====================================
-# 학과 별칭 자동 생성
-# =====================================
-def generate_department_aliases():
-
-    aliases = {}
-
-    for dept in DEPARTMENT_PHONES.keys():
-
-        # 정식 명칭
-        aliases[dept] = dept
-
-        # 괄호 안 전공 추출
-        match = re.search(
-            r"\((.*?)\)",
-            dept
-        )
-
-        if match:
-
-            major = match.group(1).strip()
-
-            aliases[major] = dept
-
-            if major.endswith("전공"):
-                aliases[
-                    major.replace("전공", "")
-                ] = dept
-
-            if major.endswith("학과"):
-                aliases[
-                    major.replace("학과", "")
-                ] = dept
-
-        # 전자공학과 → 전자공학
-        if dept.endswith("학과"):
-            aliases[
-                dept.replace("학과", "")
-            ] = dept
-
-        # 경영학부 → 경영
-        if dept.endswith("학부"):
-            aliases[
-                dept.replace("학부", "")
-            ] = dept
-
-    # 학생들이 자주 쓰는 표현
-    custom_aliases = {
-        "컴공": "AI·SW학부(컴퓨터공학전공)",
-        "정통": "AI·SW학부(정보통신공학전공)",
-        "정보보안": "AI·SW학부(정보보안전공)",
-        "인공지능": "AI·SW학부(인공지능공학전공)",
-        "모빌리티": "AI·SW학부(모빌리티SW전공)",
-        "전자과": "전자공학과",
-        "기계과": "기계공학과",
-        "건축과": "건축공학과"
-    }
-
-    for alias, dept in custom_aliases.items():
-
-        if dept in DEPARTMENT_PHONES:
-            aliases[alias] = dept
-
-    return aliases
-
-
-DEPARTMENT_ALIAS = generate_department_aliases()
-
-print(
-    f"📞 학과 별칭 "
-    f"{len(DEPARTMENT_ALIAS)}개 생성 완료"
-)
-
-# =====================================
-# 학과 전화번호 찾기
-# =====================================
-def find_department_phone(
-    question: str,
-    docs: list
-):
-
-    question = question.strip()
-
-    # 질문 우선 검색
-    for alias, dept in DEPARTMENT_ALIAS.items():
-
-        if alias in question:
-
-            phone = DEPARTMENT_PHONES.get(dept)
-
-            if phone:
-                return dept, phone
-
-    # 검색 문서 검색
-    for doc in docs:
-
-        for alias, dept in DEPARTMENT_ALIAS.items():
-
-            if alias in doc:
-
-                phone = DEPARTMENT_PHONES.get(dept)
-
-                if phone:
-                    return dept, phone
-
-    return None, None
-
-
-# =====================================
-# 검색 함수
-# =====================================
-def search_docs(query: str):
-
-    if not query.strip():
-
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="질문이 비어 있습니다."
-        )
-
-    results = vectorstore.similarity_search_with_score(
-        query,
-        k=3
-    )
-
-    threshold = 0.5
-
-    docs = []
-    sources = []
-
-    for doc, score in results:
-
-        if score < threshold:
-
-            docs.append(
-                doc.page_content
-            )
-
-            sources.append(
-                doc.metadata.get(
-                    "source",
-                    ""
-                )
-            )
-
-    if not docs:
-
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="검색 결과가 없습니다."
-        )
-
-    return docs, sources
-
-
-# =====================================
-# GPT 응답 함수
-# =====================================
-async def get_gpt_response(
-    question,
-    context
-):
-
-    prompt = f"""
-너는 조선대학교 정보 도우미야.
-
-아래 정보를 기반으로 질문에 답변해.
-
-[참고 정보]
-{context}
-
-[질문]
-{question}
-
-[규칙]
-- 참고 정보에 있는 내용만 사용
-- 정보가 없으면
-  "해당 정보를 찾을 수 없습니다"
-  라고 답변
-- 한국어로 답변
-"""
-
-    response = await client.chat.completions.create(
-        model=CHAT_MODEL_NAME,
-        messages=[
-            {
-                "role": "system",
-                "content": "조선대학교 정보 챗봇"
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
+def is_memory_recall_question(question: str) -> bool:
+    normalized = str(question or "").replace(" ", "")
+    return any(
+        marker in normalized
+        for marker in [
+            "내가알려준정보",
+            "내정보",
+            "뭘기억",
+            "뭐기억",
+            "기억하고있는",
+            "기억나는",
+            "알려준게뭐",
         ]
     )
 
-    return (
-        response
-        .choices[0]
-        .message
-        .content
+
+def is_memory_clear_question(question: str) -> bool:
+    normalized = str(question or "").replace(" ", "")
+    return any(
+        marker in normalized
+        for marker in [
+            "내정보초기화",
+            "메모리초기화",
+            "기억초기화",
+            "내정보다지워",
+            "기억다지워",
+            "모든기억삭제",
+            "전체기억삭제",
+        ]
     )
 
 
-# =====================================
-# 기본 API
-# =====================================
-@app.get(
-    "/",
-    status_code=status.HTTP_200_OK
-)
-def root():
+def is_memory_disable_question(question: str) -> bool:
+    normalized = str(question or "").replace(" ", "")
+    return any(
+        marker in normalized
+        for marker in [
+            "앞으로기억하지마",
+            "앞으론기억하지마",
+            "이제기억하지마",
+            "메모리꺼",
+            "기억기능꺼",
+            "저장하지마",
+            "내정보저장하지마",
+        ]
+    )
 
+
+def is_memory_enable_question(question: str) -> bool:
+    normalized = str(question or "").replace(" ", "")
+    return any(
+        marker in normalized
+        for marker in [
+            "다시기억해",
+            "기억다시해",
+            "메모리켜",
+            "기억기능켜",
+            "저장해도돼",
+            "기억해도돼",
+        ]
+    )
+
+
+def is_memory_delete_question(question: str) -> bool:
+    normalized = str(question or "").replace(" ", "")
+    return any(
+        marker in normalized
+        for marker in [
+            "기억하지마",
+            "기억하지말아",
+            "기억에서빼",
+            "기억에서삭제",
+            "기억삭제",
+            "메모리삭제",
+            "정보삭제",
+            "내정보삭제",
+            "지워줘",
+            "지워",
+            "없애줘",
+            "없애",
+            "삭제해줘",
+            "삭제",
+            "잊어줘",
+            "잊어버려",
+            "까먹어",
+        ]
+    )
+
+
+def format_memory_recall_answer(memory_context: str) -> str:
+    text = memory_context
+    text = text.replace("이전 대화에서 사용자가 알려준 개인 상황 참고 정보: ", "")
+    text = text.replace("이전 대화에서 사용자가 알려준 정보: ", "")
+    text = text.replace(
+        ". 이 정보는 사용자의 상황 파악용이며 조선대학교 공식 학사 정보보다 우선하지 않는다.",
+        "",
+    )
+    facts = [part.strip() for part in text.rstrip(".").split(";") if part.strip()]
+    if not facts:
+        return "현재 기억하고 있는 개인 상황 정보는 없습니다."
+    return "현재 기억하고 있는 정보는 다음과 같습니다.\n" + "\n".join(f"• {fact}" for fact in facts)
+
+
+def memory_debug_payload(session_id: str | None, enabled: bool) -> dict[str, Any] | None:
+    return conversation_memory.debug_snapshot(session_id) if enabled else None
+
+def extract_department_phone(hits: list[SearchHit]) -> str | None:
+    """
+    검색 결과의 metadata에서 학과 전화번호 추출
+    """
+
+    for hit in hits:
+        metadata = hit.metadata or {}
+
+        phone = (
+            metadata.get("전화번호")
+            or metadata.get("phone")
+            or metadata.get("tel")
+        )
+
+        if phone:
+            return str(phone)
+
+    return None
+
+def validate_memory_session_id(session_id: str) -> str:
+    try:
+        return str(UUID(str(session_id)))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="메모리를 찾을 수 없습니다.")
+
+# =====================================
+# 2. API Routes
+# =====================================
+
+@app.get("/", status_code=status.HTTP_200_OK)
+def root():
     return {
         "success": True,
         "message": "RAG 서버 실행 중"
     }
 
+@app.get("/health/rag", status_code=status.HTTP_200_OK)
+def rag_health():
+    errors = []
+    def collection_count(vectorstore, label: str) -> int | None:
+        try: return int(vectorstore._collection.count())
+        except Exception as exc:
+            errors.append(f"{label}: {exc}")
+            return None
 
-# =====================================
-# 챗봇 API
-# =====================================
-@app.post(
-    "/chat",
-    response_model=ChatResponse,
-    status_code=status.HTTP_200_OK
-)
-async def chat(
-    req: ChatRequest
-):
+    origin_count = collection_count(vectorstore_origin, "origin")
+    update_count = collection_count(vectorstore_update, "update")
+    indexed_counts = dict(indexed_doc_counts_by_store)
+    healthy = origin_count is not None and update_count is not None
 
-    docs, sources = search_docs(
-        req.question
-    )
+    return {
+        "success": healthy,
+        "status": "ok" if healthy else "degraded",
+        "collections": {
+            "origin": {
+                "name": ORIGIN_COLLECTION_NAME,
+                "directory": PERSIST_DIRECTORY,
+                "collection_count": origin_count,
+                "indexed_count": indexed_counts.get("origin", 0),
+            },
+            "update": {
+                "name": UPDATE_COLLECTION_NAME,
+                "directory": UPDATE_DB_DIRECTORY,
+                "collection_count": update_count,
+                "indexed_count": indexed_counts.get("update", 0),
+            },
+        },
+        "total_indexed_documents": len(all_indexed_docs),
+        "errors": errors,
+    }
 
-    context = "\n".join(docs)
+@app.get("/memory/{session_id}", status_code=status.HTTP_200_OK)
+def get_memory(session_id: str, _: str = Depends(verify_api_key)):
+    session_id = validate_memory_session_id(session_id)
+    return {
+        "success": True,
+        "memory": conversation_memory.debug_snapshot(session_id),
+    }
 
-    try:
+@app.delete("/memory/{session_id}", status_code=status.HTTP_200_OK)
+def clear_memory(session_id: str, _: str = Depends(verify_api_key)):
+    session_id = validate_memory_session_id(session_id)
+    deleted = conversation_memory.clear(session_id)
+    return {
+        "success": True,
+        "deleted": deleted,
+        "memory": conversation_memory.debug_snapshot(session_id),
+    }
 
-        answer = await get_gpt_response(
-            req.question,
-            context
-        )
+@app.delete("/memory/{session_id}/items/{memory_id}", status_code=status.HTTP_200_OK)
+def delete_memory_item(session_id: str, memory_id: str, _: str = Depends(verify_api_key)):
+    session_id = validate_memory_session_id(session_id)
+    deleted = conversation_memory.delete_by_id(session_id, memory_id)
+    return {
+        "success": True,
+        "deleted": deleted,
+        "memory": conversation_memory.debug_snapshot(session_id),
+    }
 
-    except Exception:
+@app.post("/chat", response_model=ChatResponse, status_code=status.HTTP_200_OK)
+async def chat(req: ChatRequest, _: str = Depends(verify_api_key)):
+    # 1. Memory and Intent Analysis
+    history = req.history or []
 
-        raise HTTPException(
-            status_code=500,
-            detail="GPT 응답 생성 실패"
-        )
+    if CHAT_MEMORY_ENABLED and is_memory_enable_question(req.question):
+        conversation_memory.set_enabled(req.session_id, True)
+        return {
+            "success": True,
+            "answer": "이제부터 이 채팅에서 알려준 개인 상황 정보를 다시 기억하겠습니다.",
+            "sources": [],
+            "suggestions": [],
+            "debug": {"answer_mode": "memory_enable", "memory": memory_debug_payload(req.session_id, req.debug)} if req.debug else None,
+        }
 
-    # =============================
-    # 학과 전화번호 자동 첨부
-    # =============================
-    dept, phone = find_department_phone(
-        req.question,
-        docs
-    )
+    if CHAT_MEMORY_ENABLED and is_memory_disable_question(req.question):
+        deleted = conversation_memory.clear(req.session_id)
+        conversation_memory.set_enabled(req.session_id, False)
+        return {
+            "success": True,
+            "answer": f"앞으로 이 채팅에서는 개인 상황 정보를 기억하지 않겠습니다. 기존에 기억하던 정보 {deleted}개도 삭제했습니다.",
+            "sources": [],
+            "suggestions": [],
+            "debug": {"answer_mode": "memory_disable", "memory": memory_debug_payload(req.session_id, req.debug)} if req.debug else None,
+        }
 
-    if dept and phone:
+    if CHAT_MEMORY_ENABLED and req.memory_enabled and is_memory_clear_question(req.question):
+        deleted = conversation_memory.clear(req.session_id)
+        return {
+            "success": True,
+            "answer": f"기억하고 있던 개인 상황 정보 {deleted}개를 삭제했습니다.",
+            "sources": [],
+            "suggestions": [],
+            "debug": {"answer_mode": "memory_clear", "memory": memory_debug_payload(req.session_id, req.debug)} if req.debug else None,
+        }
 
-        answer += (
-            "\n\n"
-            "━━━━━━━━━━━━━━━━━━\n"
-            "📞 관련 학과 문의처\n"
-            f"학과 : {dept}\n"
-            f"전화번호 : {phone}"
-        )
+    if CHAT_MEMORY_ENABLED and req.memory_enabled and is_memory_delete_question(req.question):
+        deleted = conversation_memory.delete_matching(req.session_id, req.question)
+        answer = "요청하신 기억을 삭제했습니다." if deleted else "삭제할 관련 기억을 찾지 못했습니다."
+        return {
+            "success": True,
+            "answer": answer,
+            "sources": [],
+            "suggestions": [],
+            "debug": {"answer_mode": "memory_delete", "memory": memory_debug_payload(req.session_id, req.debug)} if req.debug else None,
+        }
+
+    memory_context = ""
+    if CHAT_MEMORY_ENABLED and req.memory_enabled:
+        memory_context = conversation_memory.build_context(req.session_id, req.question)
+        if memory_context and not any(memory_context in msg.content for msg in history):
+            history = [ChatHistoryMessage(role="user", content=memory_context)] + history
+
+    if CHAT_MEMORY_ENABLED and req.memory_enabled and memory_context and is_memory_recall_question(req.question):
+        memory_debug = conversation_memory.debug_snapshot(req.session_id) if req.debug else None
+        return {
+            "success": True,
+            "answer": format_memory_recall_answer(memory_context),
+            "sources": [],
+            "suggestions": [],
+            "debug": {"answer_mode": "memory_recall", "memory": memory_debug} if req.debug else None,
+        }
+    
+    # 단계별 지연 계측 (5초 목표 진단용). debug 요청 시 응답에 포함되고, 항상 로그로 출력된다.
+    timings: dict[str, int] = {}
+    _pipeline_start = time.perf_counter()
+
+    # LLM-driven interpretation (Domain, Slots, Topic)
+    _t = time.perf_counter()
+    interpretation = await interpret_chat_request(req.question, history)
+    timings["interpret_ms"] = round((time.perf_counter() - _t) * 1000)
+
+    _t = time.perf_counter()
+    state = build_conversation_state(req.question, history, interpretation)
+
+    # 2. Hybrid-RAG Pipeline (Primary Path)
+    # Get high-accuracy context from structured data or traditional RAG
+    structured_data = build_structured_domain_answer(req.question, history, state, interpretation)
+    timings["route_ms"] = round((time.perf_counter() - _t) * 1000)
+    context_text = ""
+    answer_mode = "rag"
+    sources = []
+    suggestion_context = ""
+
+    # 학과실 전화번호 저장용
+    department_phone = None
+
+    if structured_data:
+        context_text = structured_data.answer
+        answer_mode = structured_data.answer_mode
+        sources = structured_data.sources
+        suggestion_context = structured_data.suggestion_context
+        
+        phone_search = search_docs(req.question)
+
+        if phone_search.hits:
+            department_phone = extract_department_phone(
+                phone_search.hits
+            )
+    else:
+        # Fallback to vector search if no structured handler matched
+        search_query = interpretation.get("standalone_question") or req.question
+        _t = time.perf_counter()
+        search_result = search_docs(search_query)
+        timings["rag_search_ms"] = round((time.perf_counter() - _t) * 1000)
+        if search_result.hits:
+            context_text = "\n".join(hit.content for hit in search_result.hits)
+            # 전화번호 추출
+            department_phone = extract_department_phone(search_result.hits)
+            answer_mode = "rag"
+            sources = [hit.source for hit in search_result.hits]
+
+    # 3. Web Search Fallback
+    # 5초 목표: RAG/정형이 컨텍스트를 찾았으면 느린 웹검색(수십 초)을 생략하고 RAG로 답한다.
+    # RAG 데이터는 updater가 매일 갱신되므로, 컨텍스트가 '완전히 비었을 때'만 웹검색으로 폴백한다.
+    # (domain==web_search라도 RAG가 답을 찾았으면 웹 호출 낭비를 피한다. 데이터 갭은 스크래퍼로 메운다.)
+    if not context_text:
+        _t = time.perf_counter()
+        web_answer = await build_official_web_search_answer_direct(req.question, history, interpretation)
+        timings["web_search_ms"] = round((time.perf_counter() - _t) * 1000)
+        if web_answer:
+            context_text = web_answer.answer
+            answer_mode = web_answer.answer_mode
+            sources = web_answer.sources
+            suggestion_context = web_answer.suggestion_context
+
+    # 4. Final Generation using LLM (Natural Language synthesis)
+    # Exceptions: factual/direct modes should remain structured and must not be rewritten by the LLM.
+    if answer_mode in ["current_date", "clarifying_question", "official_fallback", "department_site_link", "student_support_portal", "faculty_profile", "graduation_policy", "academic_administration"]:
+        final_answer = context_text
+    else:
+        # Inject verified department site links so the LLM never has to fabricate URLs.
+        dept_site_ctx = get_department_site_context(req.question, history)
+        if dept_site_ctx:
+            context_text = f"{context_text}\n\n{dept_site_ctx}" if context_text else dept_site_ctx
+        _t = time.perf_counter()
+        final_answer = await get_gpt_response(req.question, context_text, history, interpretation)
+        timings["generate_ms"] = round((time.perf_counter() - _t) * 1000)
+    
+    # Validation for empty responses or low-quality RAG
+    if not final_answer or "정보를 찾지 못했습니다" in final_answer:
+        fallback_answer = build_entity_official_fallback_answer(req.question, history)
+        if fallback_answer:
+            final_answer = fallback_answer.answer
+            answer_mode = fallback_answer.answer_mode
+
+    # Final cleanup and memory update
+    if not final_answer:
+        final_answer = "현재 관련 정보를 찾기 어렵습니다. 조선대학교 공식 홈페이지(https://www.chosun.ac.kr)를 확인해 주시기 바랍니다."
+        
+    # 학과 관련 질문인 경우 전화번호 강제 추가
+    if department_phone:
+        final_answer += (f"\n\n📞 학과실 전화번호: {department_phone}")
+
+    if CHAT_MEMORY_ENABLED and req.memory_enabled:
+        conversation_memory.update(req.session_id, req.question, interpretation, state, final_answer)
+
+    timings["total_ms"] = round((time.perf_counter() - _pipeline_start) * 1000)
+    print(f"Log: [Timing] mode={answer_mode} total={timings['total_ms']}ms detail={timings}")
+
+    debug_payload = None
+    if req.debug:
+        debug_payload = {"answer_mode": answer_mode, "interpretation": interpretation, "timings_ms": timings}
+        memory_debug = conversation_memory.debug_snapshot(req.session_id) if CHAT_MEMORY_ENABLED else None
+        if memory_debug:
+            debug_payload["memory"] = memory_debug
 
     return {
         "success": True,
-        "answer": answer,
-        "sources": sources
+        "answer": append_basis_line(final_answer, answer_mode, sources),
+        "sources": sources,
+        "suggestions": [], # Disabled per user request
+        "debug": debug_payload,
     }
 
-
-# =====================================
-# 글로벌 예외 처리
-# =====================================
 @app.exception_handler(Exception)
-def global_exception_handler(
-    request,
-    exc
-):
-
+def global_exception_handler(request, exc):
+    import os
+    content: dict[str, Any] = {"success": False, "message": "서버 내부 오류 발생"}
+    if os.getenv("DEBUG", "false").lower() in ("true", "1", "yes"):
+        content["detail"] = str(exc)
     return JSONResponse(
-        status_code=500,
-        content={
-            "success": False,
-            "message": "서버 내부 오류 발생",
-            "detail": str(exc)
-        }
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content=content,
     )
-
-
-# =====================================
-# 실행
-# uvicorn main:app --reload
-# =====================================
