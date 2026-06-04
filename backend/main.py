@@ -152,6 +152,24 @@ def format_memory_recall_answer(memory_context: str) -> str:
 def memory_debug_payload(session_id: str | None, enabled: bool) -> dict[str, Any] | None:
     return conversation_memory.debug_snapshot(session_id) if enabled else None
 
+def extract_department_phone(hits: list[SearchHit]) -> str | None:
+    """
+    검색 결과의 metadata에서 학과 전화번호 추출
+    """
+
+    for hit in hits:
+        metadata = hit.metadata or {}
+
+        phone = (
+            metadata.get("전화번호")
+            or metadata.get("phone")
+            or metadata.get("tel")
+        )
+
+        if phone:
+            return str(phone)
+
+    return None
 
 def validate_memory_session_id(session_id: str) -> str:
     try:
@@ -317,11 +335,21 @@ async def chat(req: ChatRequest, _: str = Depends(verify_api_key)):
     sources = []
     suggestion_context = ""
 
+    # 학과실 전화번호 저장용
+    department_phone = None
+
     if structured_data:
         context_text = structured_data.answer
         answer_mode = structured_data.answer_mode
         sources = structured_data.sources
         suggestion_context = structured_data.suggestion_context
+        
+        phone_search = search_docs(req.question)
+
+        if phone_search.hits:
+            department_phone = extract_department_phone(
+                phone_search.hits
+            )
     else:
         # Fallback to vector search if no structured handler matched
         search_query = interpretation.get("standalone_question") or req.question
@@ -330,6 +358,8 @@ async def chat(req: ChatRequest, _: str = Depends(verify_api_key)):
         timings["rag_search_ms"] = round((time.perf_counter() - _t) * 1000)
         if search_result.hits:
             context_text = "\n".join(hit.content for hit in search_result.hits)
+            # 전화번호 추출
+            department_phone = extract_department_phone(search_result.hits)
             answer_mode = "rag"
             sources = [hit.source for hit in search_result.hits]
 
@@ -370,6 +400,10 @@ async def chat(req: ChatRequest, _: str = Depends(verify_api_key)):
     # Final cleanup and memory update
     if not final_answer:
         final_answer = "현재 관련 정보를 찾기 어렵습니다. 조선대학교 공식 홈페이지(https://www.chosun.ac.kr)를 확인해 주시기 바랍니다."
+        
+    # 학과 관련 질문인 경우 전화번호 강제 추가
+    if department_phone:
+        final_answer += (f"\n\n📞 학과실 전화번호: {department_phone}")
 
     if CHAT_MEMORY_ENABLED and req.memory_enabled:
         conversation_memory.update(req.session_id, req.question, interpretation, state, final_answer)
