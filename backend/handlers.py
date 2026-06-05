@@ -31,6 +31,27 @@ PERSON_LOOKUP_TERMS = ["누구", "연구실", "연구분야", "전공분야", "�
 # 교수진이 아닌 행정부서/창구 — 교수 핸들러가 가로채면 안 되고 RAG/웹 검색으로 보내야 함
 ADMIN_OFFICE_TERMS = ["교학팀", "교무처", "교무팀", "학사팀", "행정실", "행정팀", "사무실", "학과사무실", "학생지원", "학생지원처", "입학처", "총무과", "교육지원", "취업지원", "산학협력단"]
 
+# RAG 컨텍스트로 [현재 질문]에 답할 수 없을 때 LLM이 출력하는 신호.
+# main.py가 이를 감지해 웹검색(JINA) 폴백으로 전환하며, 사용자에게는 노출하지 않는다.
+NO_CONTEXT_SENTINEL = "__NO_CONTEXT__"
+# 센티넬을 누락한 경우를 위한 보조 '정보 없음' 단문 감지 문구(긴 답변에는 적용하지 않아 부분답변을 보호).
+_NO_INFO_PHRASES = (
+    "정보를 찾지 못", "정보가 없", "정보는 제공되지 않", "제공되지 않고 있",
+    "확인되지 않", "찾을 수 없", "안내해 드릴 수 없", "관련 정보가 부족", "정보를 제공하지 않",
+)
+
+def answer_signals_no_context(answer: str) -> bool:
+    """LLM 답변이 '컨텍스트로 답하지 못함'을 나타내는지 판단한다(웹검색 폴백 트리거용)."""
+    if not answer or not answer.strip():
+        return True
+    if NO_CONTEXT_SENTINEL in answer:
+        return True
+    stripped = answer.strip()
+    # 긴 답변은 실제 정보를 담았을 가능성이 높으므로 보조 감지를 적용하지 않는다.
+    if len(stripped) <= 160 and any(p in stripped for p in _NO_INFO_PHRASES):
+        return True
+    return False
+
 # 단과대학별 교학팀 대표 전화번호 (출처: chosun_rag_data/학사공지_2026.txt '단과대학 교학팀' 안내)
 # 조선대 교학팀은 학과 단위가 아니라 단과대학 단위로 운영되므로, 학과 질문은 소속 단과대로 매핑해 안내한다.
 COLLEGE_OFFICE_PHONES = [
@@ -1241,6 +1262,7 @@ async def get_gpt_response(question: str, context: str, history: list[ChatHistor
 5. 금지사항: 답변 본문에 직접적인 URL이나 "[공식 홈페이지]" 같은 텍스트는 포함하지 마. (시스템이 별도로 처리함)
 6. 정확성: 오늘 날짜는 {now.strftime("%Y년 %m월 %d일")}이야. 날짜와 요일을 정확히 계산해서 안내해.
 7. 연락처 그라운딩: 전화번호·연락처는 반드시 [참고 정보]에 명시된 것만 사용해. [참고 정보]에 해당 부서/대상의 번호가 없으면 "확인된 번호가 없다"고 안내하고, 절대 [이전 대화]에 나온 다른 번호를 가져다 붙이거나 추측하지 마. 특히 '교학팀' 같은 행정부서 번호를 교수 연구실 번호로 답하지 마.
+8. 정보 부재 신호: [참고 정보]에 [현재 질문]에 답할 내용이 전혀 없으면, 추측하거나 사과 문구를 지어내지 말고 다른 어떤 텍스트도 없이 정확히 `__NO_CONTEXT__` 한 단어만 출력해. (시스템이 이를 감지해 웹 검색으로 전환함)
 """.strip()
     history_text = format_chat_history(history, max_messages=5)
     user_prompt = f"[참고 정보]\n{context}\n\n[이전 대화]\n{history_text}\n\n[현재 질문]\n\"\"\"{question}\"\"\""

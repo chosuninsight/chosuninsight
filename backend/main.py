@@ -364,10 +364,11 @@ async def chat(req: ChatRequest, _: str = Depends(verify_api_key)):
             sources = [hit.source for hit in search_result.hits]
 
     # 3. Web Search Fallback
-    # 5초 목표: RAG/정형이 컨텍스트를 찾았으면 느린 웹검색(수십 초)을 생략하고 RAG로 답한다.
-    # RAG 데이터는 updater가 매일 갱신되므로, 컨텍스트가 '완전히 비었을 때'만 웹검색으로 폴백한다.
-    # (domain==web_search라도 RAG가 답을 찾았으면 웹 호출 낭비를 피한다. 데이터 갭은 스크래퍼로 메운다.)
-    if not context_text:
+    # 5초 목표: 일반 질문은 RAG/정형이 컨텍스트를 찾았으면 느린 웹검색(수십 초)을 생략한다.
+    # 단, 사용자가 명시적으로 '웹에서 최신 정보를 찾아달라'는 의도(domain==web_search)이면
+    # RAG가 컨텍스트를 찾았더라도 JINA를 실행한다. 그래야 JINA가 정보를 가져온 출처
+    # ({title,url}) 버튼을 답변과 함께 제공할 수 있다(웹검색 의도 질문에만 지연 발생).
+    if not context_text or state.domain_intent == "web_search":
         _t = time.perf_counter()
         web_answer = await build_official_web_search_answer_direct(req.question, history, interpretation)
         timings["web_search_ms"] = round((time.perf_counter() - _t) * 1000)
@@ -389,7 +390,26 @@ async def chat(req: ChatRequest, _: str = Depends(verify_api_key)):
         _t = time.perf_counter()
         final_answer = await get_gpt_response(req.question, context_text, history, interpretation)
         timings["generate_ms"] = round((time.perf_counter() - _t) * 1000)
-    
+
+        # RAG가 관련 정보를 못 찾아 LLM이 '정보 없음'을 신호하면, 웹검색(JINA)으로 폴백한다.
+        # 이때 비로소 출처(어디서 가져왔는지) 버튼이 답변과 함께 제공된다.
+        # 이미 웹검색으로 답한 경우(official_web_search)는 재검색하지 않는다.
+        if answer_mode != "official_web_search" and answer_signals_no_context(final_answer):
+            _t = time.perf_counter()
+            web_answer = await build_official_web_search_answer_direct(req.question, history, interpretation)
+            timings["web_fallback_ms"] = round((time.perf_counter() - _t) * 1000)
+            if web_answer:
+                final_answer = web_answer.answer
+                answer_mode = web_answer.answer_mode
+                sources = web_answer.sources
+                suggestion_context = web_answer.suggestion_context
+            else:
+                final_answer = ""  # 아래 빈 응답 폴백 처리에 위임
+
+    # 센티넬이 어떤 경로로든 남아 사용자에게 노출되지 않도록 정리한다.
+    if NO_CONTEXT_SENTINEL in final_answer:
+        final_answer = final_answer.replace(NO_CONTEXT_SENTINEL, "").strip()
+
     # Validation for empty responses or low-quality RAG
     if not final_answer or "정보를 찾지 못했습니다" in final_answer:
         fallback_answer = build_entity_official_fallback_answer(req.question, history)

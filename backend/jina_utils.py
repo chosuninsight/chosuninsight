@@ -100,9 +100,12 @@ class JinaSearchTool:
             search_query = f"{query} site:chosun.ac.kr"
 
         url = f"{self.base_url}{requests.utils.quote(search_query)}"
+        # X-Respond-With: no-content → 결과 페이지 본문을 크롤링하지 않고 SERP(제목·URL·요약 스니펫)만
+        # 반환한다. 전체 본문 크롤링은 25~35초가 걸려 우리 타임아웃(8초)을 항상 초과하지만,
+        # 본문을 생략하면 ~3초로 단축된다. 출처 버튼(title+url)과 요약용 스니펫(description)은 그대로 확보된다.
         headers = {
             "Accept": "application/json",
-            "X-With-Generated-Alt": "true"
+            "X-Respond-With": "no-content",
         }
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
@@ -131,8 +134,8 @@ class JinaSearchTool:
             seen_urls: set[str] = set()
             for i, res in enumerate(results[:self.max_results]):
                 title = str(res.get("title", "") or "").strip()
-                # Clean asterisks from content
-                content = res.get("content", "No Content").replace("*", "")
+                # no-content 모드에선 content가 비므로 description(검색 스니펫)을 요약 근거로 사용한다.
+                content = (str(res.get("content") or "").strip() or str(res.get("description") or "").strip() or "No Content").replace("*", "")
                 link = str(res.get("url", "") or "").strip()
                 formatted.append(f"[{i+1}] {title or 'No Title'}\nURL: {link}\nContent: {content}\n")
                 if link and link not in seen_urls:
